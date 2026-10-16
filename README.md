@@ -2,8 +2,10 @@
 
 Intégration Home Assistant pour le réseau **STAR** de Rennes : métro en temps réel, bus, vélos en libre-service et parcs relais, avec deux cartes Lovelace prêtes à l'emploi.
 
+[![Version](https://img.shields.io/github/v/release/klethimonier-ux/ha-star-rennes-live?label=version)](https://github.com/klethimonier-ux/ha-star-rennes-live/releases/latest)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
 [![Validation](https://github.com/klethimonier-ux/ha-star-rennes-live/actions/workflows/validate.yml/badge.svg)](https://github.com/klethimonier-ux/ha-star-rennes-live/actions/workflows/validate.yml)
+[![Auteur](https://img.shields.io/badge/auteur-klethimonier--ux-181717?logo=github)](https://github.com/klethimonier-ux)
 
 ## Fonctionnalités
 
