@@ -1,0 +1,111 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "STAR Rennes Live",
+        "description": "Choose the STAR network services to follow. A data.explore.star.fr API key is recommended (free, see the documentation).",
+        "data": {
+          "metro": "Metro",
+          "bus": "Bus",
+          "bike": "STAR bike share",
+          "parking": "Park and ride",
+          "api_key": "STAR API key"
+        },
+        "data_description": {
+          "api_key": "Personal key created on data.explore.star.fr. Leave empty for anonymous access (shared quota)."
+        }
+      },
+      "bus_line": {
+        "title": "Bus line",
+        "data": {
+          "bus_line": "Line"
+        }
+      },
+      "bus_stop": {
+        "title": "Stop",
+        "data": {
+          "bus_stop": "Stop"
+        }
+      },
+      "bus_destination": {
+        "title": "Direction",
+        "data": {
+          "bus_destination": "Direction"
+        }
+      },
+      "select_equipment": {
+        "title": "Selection",
+        "data": {
+          "bike_stations": "Bike stations",
+          "parking_ids": "Park and ride",
+          "metro_lines": "Metro lines",
+          "metro_stations": "Metro stations",
+          "metro_rames": "Live train map"
+        },
+        "data_description": {
+          "metro_rames": "Downloads the metro GTFS timetable daily (~8 MB) for the Metro card.",
+          "metro_stations": "Status, equipment and next two real-time departures."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "API key rejected by STAR.",
+      "cannot_connect": "Cannot reach the STAR API."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Followed services",
+        "data": {
+          "metro": "Metro",
+          "bus": "Bus",
+          "bike": "STAR bike share",
+          "parking": "Park and ride",
+          "api_key": "STAR API key"
+        },
+        "data_description": {
+          "api_key": "Personal key created on data.explore.star.fr. Leave empty for anonymous access (shared quota)."
+        }
+      },
+      "configure": {
+        "title": "Selection",
+        "data": {
+          "bus_existing": "Followed buses (untick to remove)",
+          "add_bus": "Add a bus",
+          "bike_stations": "Bike stations",
+          "parking_ids": "Park and ride",
+          "metro_lines": "Metro lines",
+          "metro_stations": "Metro stations",
+          "metro_rames": "Live train map"
+        },
+        "data_description": {
+          "metro_rames": "Downloads the metro GTFS timetable daily (~8 MB) for the Metro card.",
+          "metro_stations": "Status, equipment and next two real-time departures."
+        }
+      },
+      "bus_line": {
+        "title": "Bus line",
+        "data": {
+          "bus_line": "Line"
+        }
+      },
+      "bus_stop": {
+        "title": "Stop",
+        "data": {
+          "bus_stop": "Stop"
+        }
+      },
+      "bus_destination": {
+        "title": "Direction",
+        "data": {
+          "bus_destination": "Direction"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "API key rejected by STAR.",
+      "cannot_connect": "Cannot reach the STAR API."
+    }
+  }
+}

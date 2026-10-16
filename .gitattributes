@@ -1,0 +1,4 @@
+# Fins de ligne Unix partout (Home Assistant tourne sous Linux)
+* text=auto eol=lf
+*.png binary
+*.jpg binary

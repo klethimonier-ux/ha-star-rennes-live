@@ -1,0 +1,1 @@
+class BinarySensorEntity: pass
