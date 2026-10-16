@@ -103,7 +103,6 @@ Seuls les services sélectionnés sont interrogés.
 
 - La position des rames est **estimée** : STAR publie les deux prochains passages à chaque quai, pas la position GPS des rames.
 - L'affluence n'est affichée que lorsque STAR la mesure (valeurs observées : « Vert Clair », « Vert Foncé » ; une valeur inconnue s'affiche en gris).
-- Les fermetures de station la nuit ou avant la première rame ne sont pas signalées comme perturbations.
 
 ## Crédits
 
