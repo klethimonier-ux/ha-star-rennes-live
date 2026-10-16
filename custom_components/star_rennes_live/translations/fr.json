@@ -1,0 +1,111 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "STAR Rennes Live",
+        "description": "Choisissez les services du réseau STAR à suivre. Une clé d'API data.explore.star.fr est recommandée (gratuite, voir la documentation).",
+        "data": {
+          "metro": "Métro",
+          "bus": "Bus",
+          "bike": "Le vélo STAR",
+          "parking": "Parcs relais",
+          "api_key": "Clé d'API STAR"
+        },
+        "data_description": {
+          "api_key": "Clé personnelle créée sur data.explore.star.fr. Laissez vide pour un accès anonyme (quota partagé)."
+        }
+      },
+      "bus_line": {
+        "title": "Ligne de bus",
+        "data": {
+          "bus_line": "Ligne"
+        }
+      },
+      "bus_stop": {
+        "title": "Arrêt",
+        "data": {
+          "bus_stop": "Arrêt"
+        }
+      },
+      "bus_destination": {
+        "title": "Direction",
+        "data": {
+          "bus_destination": "Direction"
+        }
+      },
+      "select_equipment": {
+        "title": "Sélection",
+        "data": {
+          "bike_stations": "Stations vélo",
+          "parking_ids": "Parcs relais",
+          "metro_lines": "Lignes de métro",
+          "metro_stations": "Stations de métro",
+          "metro_rames": "Schéma des rames en temps réel"
+        },
+        "data_description": {
+          "metro_rames": "Télécharge chaque jour les horaires GTFS du métro (~8 Mo) pour la carte « Métro ».",
+          "metro_stations": "État, équipements et deux prochains passages en temps réel."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Clé d'API refusée par STAR.",
+      "cannot_connect": "Impossible de joindre l'API STAR."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Services suivis",
+        "data": {
+          "metro": "Métro",
+          "bus": "Bus",
+          "bike": "Le vélo STAR",
+          "parking": "Parcs relais",
+          "api_key": "Clé d'API STAR"
+        },
+        "data_description": {
+          "api_key": "Clé personnelle créée sur data.explore.star.fr. Laissez vide pour un accès anonyme (quota partagé)."
+        }
+      },
+      "configure": {
+        "title": "Sélection",
+        "data": {
+          "bus_existing": "Bus suivis (décochez pour retirer)",
+          "add_bus": "Ajouter un bus",
+          "bike_stations": "Stations vélo",
+          "parking_ids": "Parcs relais",
+          "metro_lines": "Lignes de métro",
+          "metro_stations": "Stations de métro",
+          "metro_rames": "Schéma des rames en temps réel"
+        },
+        "data_description": {
+          "metro_rames": "Télécharge chaque jour les horaires GTFS du métro (~8 Mo) pour la carte « Métro ».",
+          "metro_stations": "État, équipements et deux prochains passages en temps réel."
+        }
+      },
+      "bus_line": {
+        "title": "Ligne de bus",
+        "data": {
+          "bus_line": "Ligne"
+        }
+      },
+      "bus_stop": {
+        "title": "Arrêt",
+        "data": {
+          "bus_stop": "Arrêt"
+        }
+      },
+      "bus_destination": {
+        "title": "Direction",
+        "data": {
+          "bus_destination": "Direction"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Clé d'API refusée par STAR.",
+      "cannot_connect": "Impossible de joindre l'API STAR."
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "domain": "star_rennes_live",
+  "name": "STAR Rennes Live",
+  "codeowners": [
+    "@klethimonier-ux"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend"
+  ],
+  "documentation": "https://github.com/klethimonier-ux/ha-star-rennes-live",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/klethimonier-ux/ha-star-rennes-live/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

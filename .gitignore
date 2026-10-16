@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+Thumbs.db
+# Ne jamais publier de sauvegarde ni de clé
+*.sauvegarde*/
+secrets.yaml
+.env

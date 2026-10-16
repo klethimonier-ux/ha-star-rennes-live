@@ -1,0 +1,28 @@
+# Publication vers GitHub : poser un tag hacs-vX.Y.Z sur main
+#   git tag hacs-v1.0.0 && git push origin hacs-v1.0.0
+# Variable CI/CD requise : GITHUB_TOKEN (jeton GitHub, Contents + Workflows en écriture)
+
+variables:
+  GIT_DEPTH: 0                      # historique complet (GitHub refuse un clone partiel)
+  GITHUB_REPO: "github.com/klethimonier-ux/ha-star-rennes-live.git"
+  GITHUB_USER: "klethimonier-ux"
+
+publish-github:
+  image: alpine/git
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^hacs-v[0-9]+\.[0-9]+\.[0-9]+$/'
+  script:
+    - VERSION="${CI_COMMIT_TAG#hacs-}"            # hacs-v1.0.0 -> v1.0.0
+    - REMOTE="https://${GITHUB_USER}:${GITHUB_TOKEN}@${GITHUB_REPO}"
+    # 1. Le tag doit être sur main
+    - git fetch origin main
+    - git merge-base --is-ancestor "$CI_COMMIT_SHA" origin/main || { echo "Tag hors de main, rien n'est publié"; exit 1; }
+    # 2. La version du manifest doit correspondre au tag
+    - MANIFEST="$(ls custom_components/*/manifest.json)"
+    - '[ "$(echo "$MANIFEST" | wc -l)" -eq 1 ] || { echo "Il faut exactement un manifest.json : $MANIFEST"; exit 1; }'
+    - MANIFEST_VERSION="$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$MANIFEST" | sed 's/.*"\([^"]*\)"$/\1/')"
+    - '[ "v${MANIFEST_VERSION}" = "$VERSION" ] || { echo "Tag $VERSION mais manifest en ${MANIFEST_VERSION:-?} ($MANIFEST)"; exit 1; }'
+    # 3. Publication : branche de release, tag de version, main (sans écrasement)
+    - git push "$REMOTE" "${CI_COMMIT_SHA}:refs/heads/release/${VERSION}"
+    - git push "$REMOTE" "${CI_COMMIT_SHA}:refs/tags/${VERSION}"
+    - git push "$REMOTE" "${CI_COMMIT_SHA}:refs/heads/main"
