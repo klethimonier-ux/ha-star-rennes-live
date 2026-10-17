@@ -24,6 +24,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # La topologie des stations est statique : on la recharge une fois par jour.
 TOPOLOGY_MAX_AGE = timedelta(hours=24)
+# Équipements de tout le réseau (fermetures déduites, ~3 requêtes) : toutes les 5 min.
+NETWORK_EQUIPMENTS_MAX_AGE = timedelta(minutes=5)
 
 
 class MetroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -46,6 +48,8 @@ class MetroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._fetch_stations = bool(self._station_ids)
         self._topology: dict[str, dict[str, Any]] | None = None
         self._topology_fetched_at: datetime | None = None
+        self._network_equipments: dict[str, dict[str, Any]] = {}
+        self._network_fetched_at: datetime | None = None
 
         super().__init__(
             hass,
@@ -74,26 +78,43 @@ class MetroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Rafraîchissement de la topologie métro impossible, cache conservé")
         return self._topology
 
+    async def _async_get_network_equipments(self) -> dict[str, dict[str, Any]]:
+        """Équipements de toutes les stations, rafraîchis toutes les 5 minutes."""
+        now = dt_util.utcnow()
+        if self._network_fetched_at is not None and now - self._network_fetched_at < NETWORK_EQUIPMENTS_MAX_AGE:
+            return self._network_equipments
+        try:
+            self._network_equipments = await self.api.async_get_equipments()
+            self._network_fetched_at = now
+        except StarApiError as err:
+            # Facultatif : sans eux, seules les fermetures publiées sont signalées
+            _LOGGER.debug("Équipements du réseau indisponibles : %s", err)
+        return self._network_equipments
+
     async def _async_update_data(self) -> dict[str, Any]:
         # Lignes + état des stations sont toujours lus (2 requêtes) : ils
         # servent au capteur de perturbations (station fermée n'importe où
         # sur le réseau). Topologie et équipements : stations suivies seulement.
         try:
             if not self._fetch_stations:
-                lines, stations_rt = await asyncio.gather(
+                lines, stations_rt, network = await asyncio.gather(
                     self.api.async_get_lines(),
                     self.api.async_get_stations_realtime(),
+                    self._async_get_network_equipments(),
                 )
                 return self._without_night_closures(
-                    build_metro_structure(lines, {}, stations_rt, {}, _format_time)
+                    build_metro_structure(lines, {}, stations_rt, dict(network), _format_time)
                 )
 
             topology = await self._async_get_topology()
-            lines, stations_rt, equipments = await asyncio.gather(
+            lines, stations_rt, equipments, network = await asyncio.gather(
                 self.api.async_get_lines(),
                 self.api.async_get_stations_realtime(),
                 self.api.async_get_equipments(self._station_ids),
+                self._async_get_network_equipments(),
             )
+            # Stations suivies : état à 30 s ; autres stations : état à 5 min
+            equipments = {**network, **equipments}
         except StarApiError as err:
             raise UpdateFailed(f"Erreur API STAR (métro) : {err}") from err
 

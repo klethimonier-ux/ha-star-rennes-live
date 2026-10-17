@@ -292,6 +292,70 @@ def summarize_directions(
 
 
 # ---------------------------------------------------------------------------
+# FERMETURE DÉDUITE DES ÉQUIPEMENTS
+# ---------------------------------------------------------------------------
+# STAR ne signale pas toujours une station fermée (ex. République pendant une
+# manifestation) ; en revanche, tous ses ascenseurs et escaliers mécaniques
+# passent alors hors service. On en déduit la fermeture, ligne par ligne.
+ACCESS_TYPES = ("ASC", "ESC")
+MIN_ACCESS_EQUIPMENTS = 2  # une seule panne isolée ne suffit pas à conclure
+DEDUCED_CLOSED_STATE = "Fermée"
+
+
+def access_closed_lines(equipments: list[dict[str, Any]]) -> list[str]:
+    """Lignes dont tous les ascenseurs et escaliers mécaniques de la station sont HS."""
+    statuses: dict[str, list[str]] = defaultdict(list)
+    for equipment in equipments:
+        code = equipment.get("line_code")
+        if equipment.get("type_short") in ACCESS_TYPES and code in LINE_DIRECTIONS:
+            statuses[code].append(equipment_status(equipment.get("state")))
+    return sorted(
+        code
+        for code, values in statuses.items()
+        if len(values) >= MIN_ACCESS_EQUIPMENTS and all(v == "hs" for v in values)
+    )
+
+
+def apply_access_closures(
+    stations_rt: dict[str, dict[str, Any]],
+    equipments: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Copie de stations_rt où les stations sans aucun accès en service sont fermées.
+
+    Ajoute « closed_by_equipment » (lignes concernées) ; une station absente
+    du jeu temps réel (ligne b) est créée à partir des équipements.
+    """
+    by_station: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for equipment in equipments:
+        by_station[str(equipment.get("station_id"))].append(equipment)
+
+    result = {sid: {**st, "states_by_line": dict(st.get("states_by_line", {}))} for sid, st in stations_rt.items()}
+    for sid, items in by_station.items():
+        deduced = access_closed_lines(items)
+        if not deduced:
+            continue
+        station = result.setdefault(
+            sid,
+            {
+                "id": sid,
+                "name": items[0].get("station_name"),
+                "coords": None,
+                "states_by_line": {},
+                "lastupdate": None,
+            },
+        )
+        changed = []
+        for code in deduced:
+            if station_state_is_open(station["states_by_line"].get(code)):
+                station["states_by_line"][code] = DEDUCED_CLOSED_STATE
+                changed.append(code)
+        if changed:
+            station["closed_by_equipment"] = changed
+            station["state"] = _combine_states(station["states_by_line"])
+    return result
+
+
+# ---------------------------------------------------------------------------
 # PERTURBATIONS (réseau métro complet)
 # ---------------------------------------------------------------------------
 def _lines_label(codes: list[str]) -> str:
@@ -376,6 +440,7 @@ def build_perturbations(
         closed = closed_lines(station.get("states_by_line", {}))
         if not closed:
             continue
+        deduced = bool(set(closed) & set(station.get("closed_by_equipment", [])))
         items.append(
             {
                 "type": "station",
@@ -384,7 +449,12 @@ def build_perturbations(
                 "station": station.get("name"),
                 "lignes": closed,
                 "titre": f"Station {station.get('name')} fermée",
-                "detail": f"{_lines_label(closed)} · les rames ne s'y arrêtent pas",
+                "detail": (
+                    f"{_lines_label(closed)} · tous les ascenseurs et escaliers sont hors service"
+                    if deduced
+                    else f"{_lines_label(closed)} · les rames ne s'y arrêtent pas"
+                ),
+                "deduite": deduced,
             }
         )
 
@@ -403,6 +473,7 @@ def build_metro_structure(
     Construit des dictionnaires neufs à chaque appel : la topologie mise en
     cache par le coordinator n'est jamais modifiée.
     """
+    stations_rt = apply_access_closures(stations_rt, list(equipments.values()))
     station_to_equip: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for equipment in equipments.values():
         station_to_equip[equipment["station_id"]].append(equipment)
@@ -419,6 +490,7 @@ def build_metro_structure(
             "states_by_line": states_by_line,
             "closed_lines": closed,
             "closed": bool(states_by_line) and len(closed) == len(states_by_line),
+            "closed_by_equipment": rt.get("closed_by_equipment", []) if rt else [],
             "lastupdate": rt["lastupdate"] if rt else None,
             "realtime_available": rt is not None,
             "equipments": station_equipments,

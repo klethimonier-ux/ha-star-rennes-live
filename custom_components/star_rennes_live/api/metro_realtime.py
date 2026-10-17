@@ -28,6 +28,8 @@ TERMINUS_DWELL = 60  # s affichés à quai au terminus d'arrivée, à défaut de
 ESTIMATED_DWELL = 20  # s d'arrêt supposés quand l'arrivée est estimée
 MIN_RUN_RATIO = 0.75  # part minimale du temps de parcours (calibré) entre deux stations
 MIN_RUN = 40  # s : aucune rame ne relie deux stations plus vite
+MIN_HEADWAY = 60  # s : deux rames ne se suivent jamais à moins d'une minute à un même quai
+TERMINUS_APPROACH = 150  # s : une arrivée au terminus plus lointaine n'est pas dessinée (position inconnue)
 TURNBACK_MATCH = 120  # s : écart max entre arrivée estimée et arrivée publiée au terminus
 CONSISTENCY = 20  # s : écart toléré entre les temps de parcours de deux rames successives
 
@@ -62,12 +64,24 @@ def _fill_value(value) -> str | None:
     return None if not text or text.upper() in ("NA", "N/A", "NULL") else text
 
 
-def parse_passages(records: list[dict], timezone: str = "Europe/Paris") -> list[Passage]:
+def parse_passages(
+    records: list[dict],
+    timezone: str = "Europe/Paris",
+    now: datetime | None = None,
+) -> list[Passage]:
+    """Passages publiés ; avec now, les fiches figées sont ignorées.
+
+    Une station fermée (manifestation, incident) garde sa dernière fiche :
+    ses horaires, vieux de plusieurs dizaines de minutes, fausseraient le
+    suivi des rames et les prochains passages affichés.
+    """
     tz = ZoneInfo(timezone)
     passages: list[Passage] = []
     for rec in records:
         line = LINE_CODES.get(str(rec.get("idligne")))
         if line is None or not rec.get("nomarret"):
+            continue
+        if now is not None and not _record_is_fresh(rec, now, tz):
             continue
         times = []
         for rank in ("first", "second"):
@@ -95,24 +109,26 @@ def parse_passages(records: list[dict], timezone: str = "Europe/Paris") -> list[
     return passages
 
 
-def is_fresh(records: list[dict], now: datetime, timezone: str = "Europe/Paris") -> bool:
-    """Extraction récente (champ heureextraction « HH:MM:SS », heure locale)."""
-    tz = ZoneInfo(timezone)
+def _record_is_fresh(rec: dict, now: datetime, tz: ZoneInfo) -> bool:
+    """Fiche extraite il y a moins de MAX_AGE (heureextraction « HH:MM:SS »)."""
+    value = rec.get("heureextraction")
+    if not value:
+        return True  # pas d'horodatage : on garde
+    try:
+        h, m, s = (int(x) for x in str(value).split(":"))
+    except ValueError:
+        return True
     local = now.astimezone(tz)
-    for rec in records:
-        value = rec.get("heureextraction")
-        if not value:
-            continue
-        try:
-            h, m, s = (int(x) for x in value.split(":"))
-        except ValueError:
-            continue
-        extracted = local.replace(hour=h, minute=m, second=s, microsecond=0)
-        age = (local - extracted).total_seconds()
-        if age < -3600:  # extraction de la veille au passage de minuit
-            age += 86400
-        return -120 <= age <= MAX_AGE
-    return False
+    age = (local - local.replace(hour=h, minute=m, second=s, microsecond=0)).total_seconds()
+    if age < -3600:  # extraction de la veille au passage de minuit
+        age += 86400
+    return -120 <= age <= MAX_AGE
+
+
+def is_fresh(records: list[dict], now: datetime, timezone: str = "Europe/Paris") -> bool:
+    """Au moins une fiche récente (une station fermée peut garder une fiche figée)."""
+    tz = ZoneInfo(timezone)
+    return any(rec.get("heureextraction") and _record_is_fresh(rec, now, tz) for rec in records)
 
 
 def passages_by_station(passages: list[Passage], now: datetime, count: int = 2) -> dict[str, list[dict]]:
@@ -194,7 +210,11 @@ def build_realtime_trains(
                 new_trains, following = [], list(times)
                 # Arrivées trop tôt pour une rame déjà suivie : rames nouvelles
                 # (situées entre la station précédente et celle-ci)
-                while following and not _matches(active, following, min_run, train_ids):
+                while (
+                    following
+                    and not _matches(active, following, min_run, train_ids)
+                    and not _too_close_to_front(active, following[0], segment)
+                ):
                     arr, dep, tid = following.pop(0)
                     stops = [(idx, arr, dep)]
                     if tid:
@@ -236,7 +256,7 @@ def build_realtime_trains(
             for train in trains:
                 train.setdefault("d", direction)
 
-        _link_terminus_turnbacks(trains)
+        _link_terminus_turnbacks(trains, line.stations, t_now)
 
         # Rames visibles maintenant ou dans les prochaines minutes uniquement
         result[code] = [
@@ -277,7 +297,7 @@ def _calibrated_segments(by_station, schedule, code, direction, order):
     return seg_of
 
 
-def _link_terminus_turnbacks(trains: list[dict]) -> None:
+def _link_terminus_turnbacks(trains: list[dict], stations: list[str] | None = None, t_now: float | None = None) -> None:
     """Au terminus, la rame qui arrive est celle qui repart dans l'autre sens.
 
     Le quai de départ publie l'heure d'arrivée de la rame : elle remplace
@@ -305,6 +325,38 @@ def _link_terminus_turnbacks(trains: list[dict]) -> None:
             arrival = departing[best[1]]["s"][0][1]
             train["s"][-1] = [end_idx, arrival, arrival]
 
+    # Rame qui approche du terminus sans être suivie (elle a dépassé la dernière
+    # station publiée) : le quai de départ donne son heure d'arrivée, on la
+    # dessine sur la voie d'arrivée pendant son dernier tronçon.
+    if not stations or t_now is None:
+        return
+    last = len(stations) - 1
+    for k, other in enumerate(departing):
+        first = other["s"][0]
+        start_idx = 0 if other["d"] == 1 else last
+        if k in used or first[0] != start_idx:
+            continue
+        arrival = first[1]
+        if not (t_now < arrival <= t_now + TERMINUS_APPROACH):
+            continue
+        neighbour = 1 if start_idx == 0 else last - 1
+        leave = min(arrival - DEFAULT_SEGMENT, t_now)
+        trains.append({"h": stations[start_idx], "d": -other["d"], "s": [[neighbour, leave, leave], [start_idx, arrival, arrival]]})
+
+
+def _too_close_to_front(active: list, arrival: tuple, segment: float) -> bool:
+    """Une rame « nouvelle » arriverait-elle trop près de la rame suivie en tête ?
+
+    Si oui, c'est en fait la rame suivie, plus rapide que prévu sur un tronçon
+    court (ex. Clemenceau → Jacques Cartier en 44 s) : pas de rame fantôme.
+    """
+    if not active:
+        return False
+    front_dep = active[0][-1][2]
+    run = arrival[0] - front_dep
+    expected = front_dep + segment
+    return run >= MIN_RUN and arrival[0] > expected - MIN_HEADWAY
+
 
 def _matches(active: list, following: list, min_run: float, train_ids: dict | None = None) -> bool:
     """Les arrivées publiées correspondent-elles aux rames suivies, dans l'ordre ?
@@ -316,10 +368,8 @@ def _matches(active: list, following: list, min_run: float, train_ids: dict | No
     """
     if not active:
         return False
-    # N° de course connu des deux côtés : il fait foi
-    known = (train_ids or {}).get(id(active[0]))
-    if known and len(following[0]) > 2 and following[0][2]:
-        return following[0][2] == known
+    # Le n° publié (idfirsttrain) ne suit pas une rame d'une station à l'autre
+    # (vérifié sur la ligne a le 17/10/2026) : seuls les horaires font foi.
     for stops, (arr, *_rest) in list(zip(active, following))[:2]:
         if arr - stops[-1][2] < min_run:
             return False

@@ -138,7 +138,7 @@ class MetroTrainsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not records or not is_fresh(records, now):
             _LOGGER.debug("Temps réel métro vide ou périmé")
             return None
-        return parse_passages(records)
+        return parse_passages(records, now=now)
 
     # ---------------------------------------------------------------- cycle
     async def _async_update_data(self) -> dict[str, Any]:

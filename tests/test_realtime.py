@@ -107,7 +107,8 @@ class SameSegmentTests(unittest.TestCase):
         schedule = parse_gtfs_metro(GTFS)
         records = [
             rec("J.F. Kennedy", "La Poterie", (150, 170), (400, 420)),
-            rec("Villejean-Université", "La Poterie", (-10, 20), (270, 290)),
+            # rame à quai à Villejean jusqu'à +60 s (au moins une minute derrière la suivante)
+            rec("Villejean-Université", "La Poterie", (-10, 60), (270, 290)),
             rec("République", "La Poterie", (30, 50), (85, 105)),  # deux rames dans le tronçon
             rec("Gares", "La Poterie", (150, 170), (205, 225)),
         ]
@@ -121,7 +122,7 @@ class SameSegmentTests(unittest.TestCase):
         # La rame à quai à Villejean (sans créneau à République) continue sur une arrivée estimée
         dwelling = next(t for t in trains if t["d"] == 1 and any(s[0] == 1 and round(s[1] - t0) == -10 for s in t["s"]))
         self.assertEqual(rel(dwelling)[-1][0], 2)
-        self.assertEqual(train_position(rel(dwelling), 60), 1.4)  # partie à +20 s, arrivée estimée +120 s
+        self.assertEqual(train_position(rel(dwelling), 110), 1.5)  # partie à +60 s, arrivée estimée +160 s
 
     def test_held_train_stays_visible(self):
         from custom_components.star_rennes_live.api.gtfs_metro import parse_gtfs_metro, train_position
@@ -343,6 +344,56 @@ class NightClosureTests(unittest.TestCase):
         self.assertEqual(kept[1]["lignes"], ["A"])
         self.assertEqual(kept[1]["detail"], "Ligne a · les rames ne s'y arrêtent pas")
         self.assertEqual(drop_off_service_closures(items, lambda l, s: False), items[:1])
+
+
+class RealLineATests(unittest.TestCase):
+    """Extraction réelle STAR, ligne a, samedi 17/10/2026 15:19:54.
+
+    République fermée (manifestation) : ses deux fiches restent figées à
+    13:42. Rame toutes les ~1 min 40, tronçons courts (Clemenceau → Jacques
+    Cartier en 44 s) et n° de rame qui change d'une station à l'autre.
+    """
+
+    STATIONS = ["La Poterie", "Le Blosne", "Triangle", "Italie", "Henri Fréville", "Clemenceau",
+                "Jacques Cartier", "Gares", "Charles de Gaulle", "République", "Sainte-Anne",
+                "Anatole France", "Pontchaillou", "Villejean-Université", "J.F. Kennedy"]
+
+    def setUp(self):
+        import json
+        from zoneinfo import ZoneInfo
+        from custom_components.star_rennes_live.api.gtfs_metro import MetroSchedule, MetroLine
+        from custom_components.star_rennes_live.api.metro_realtime import parse_passages
+
+        self.now = datetime(2026, 10, 17, 15, 19, 54, tzinfo=ZoneInfo("Europe/Paris"))
+        recs = json.load(open(HERE / "fixture_ligne_a.json", encoding="utf-8"))["results"]
+        self.passages = parse_passages(recs, now=self.now)
+        self.schedule = MetroSchedule("Europe/Paris", {"A": MetroLine("A", "a", None, self.STATIONS)}, [])
+        for i in range(14):
+            self.schedule.segment_times[("A", i, i + 1)] = 120  # GTFS volontairement surestimé
+
+    def test_frozen_station_ignored(self):
+        from custom_components.star_rennes_live.api.metro_realtime import passages_by_station, is_fresh
+        import json
+
+        self.assertFalse(any(p.station == "République" for p in self.passages))
+        self.assertNotIn("republique", passages_by_station(self.passages, self.now))
+        recs = json.load(open(HERE / "fixture_ligne_a.json", encoding="utf-8"))["results"]
+        self.assertTrue(is_fresh(recs, self.now))  # une fiche figée ne disqualifie pas tout le jeu
+
+    def test_no_phantom_trains(self):
+        from custom_components.star_rennes_live.api.gtfs_metro import train_position
+        from custom_components.star_rennes_live.api.metro_realtime import build_realtime_trains
+
+        trains = build_realtime_trains(self.passages, self.schedule, self.now)["A"]
+        t0 = self.now.timestamp()
+        counts = set()
+        for dt in (0, 30, 60, 90):
+            vis = sorted((t["d"], p) for t in trains
+                         if (p := train_position([[i, a - t0, d - t0] for i, a, d in t["s"]], dt)) is not None)
+            counts.add(len(vis))
+            close = [(a, b) for a, b in zip(vis, vis[1:]) if a[0] == b[0] and b[1] - a[1] < 0.4]
+            self.assertEqual(close, [], dt)
+        self.assertEqual(counts, {19})  # stable, sans les 2 fantômes de République ni les doublons
 
 
 if __name__ == "__main__":

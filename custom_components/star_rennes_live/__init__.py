@@ -15,6 +15,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api.client import StarClient
 from .const import CONF_API_KEY, DOMAIN, get_entry_config
+from .coordinator_alerts import AlertsCoordinator
 from .coordinator_bike import BikeCoordinator
 from .coordinator_bus import StarBusCoordinator
 from .coordinator_metro import MetroCoordinator
@@ -73,8 +74,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for bus_entry in config.get("bus_entries", [])
     ]
 
+    # Alertes trafic des lignes de bus suivies (déviations, manifestations…)
+    if coordinators["bus"]:
+        coordinators["alerts"] = AlertsCoordinator(
+            hass, entry, client, [c.line_name for c in coordinators["bus"]]
+        )
+
     # Premier rafraîchissement (obligatoire), en parallèle
-    to_refresh = [c for key, c in coordinators.items() if key not in ("bus", "metro_rames")]
+    to_refresh = [c for key, c in coordinators.items() if key not in ("bus", "metro_rames", "alerts")]
     to_refresh.extend(coordinators["bus"])
     await asyncio.gather(*(c.async_config_entry_first_refresh() for c in to_refresh))
 
@@ -95,6 +102,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.async_create_background_task(
             hass, trains.async_refresh(), "star_rennes_live_gtfs_metro"
         )
+
+    # Alertes : facultatives, un échec ne bloque pas le démarrage
+    if "alerts" in coordinators:
+        await coordinators["alerts"].async_refresh()
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinators

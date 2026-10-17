@@ -14,7 +14,7 @@
  */
 
 (() => {
-const CARD_VERSION = "1.9.0";
+const CARD_VERSION = "1.10.0";
 
 // Affluence publiée par STAR pour chaque rame (couleur de remplissage)
 const CROWD_LEVELS = {
@@ -98,7 +98,32 @@ class StarTrajetsCard extends HTMLElement {
 
   _perturbations() {
     const st = this._state(this._config.perturbations);
-    return Array.isArray(st?.attributes?.perturbations) ? st.attributes.perturbations : [];
+    const metro = Array.isArray(st?.attributes?.perturbations) ? st.attributes.perturbations : [];
+    return [...this._busSuspensions(), ...metro];
+  }
+
+  // Lignes de bus suspendues (alertes des bus affichés), regroupées par alerte
+  _busSuspensions() {
+    const groups = new Map();
+    for (const conf of this._config.entities) {
+      const a = this._state(conf.entity)?.attributes;
+      for (const alert of a?.alertes || []) {
+        if (alert.type !== "suspension") continue;
+        const key = `${alert.titre}|${alert.description}`;
+        const group = groups.get(key) || { ...alert, mine: new Set() };
+        group.mine.add(a.ligne);
+        groups.set(key, group);
+      }
+    }
+    return [...groups.values()].map((g) => ({
+      type: "bus", niveau: "critique", busLines: [...g.mine],
+      titre: `${g.titre} · bus à l'arrêt`,
+      detail: g.description,
+    }));
+  }
+
+  _busSuspended(a) {
+    return (a.alertes || []).some((alert) => alert.type === "suspension");
   }
 
   _lineIcon(code) {
@@ -187,6 +212,8 @@ class StarTrajetsCard extends HTMLElement {
     const critical = p.niveau === "critique";
     const badge = p.type === "ligne" && p.ligne
       ? this._lineBadge(p.ligne)
+      : p.type === "bus"
+      ? `<span class="bus-badges">${p.busLines.map((l) => `<span class="bus-badge alert">${esc(l)}</span>`).join("")}</span>`
       : `<span class="alert-icon"><ha-icon icon="mdi:alert-outline"></ha-icon></span>`;
     return `
       <div class="perturbation ${critical ? "critical" : "warning"}">
@@ -205,7 +232,10 @@ class StarTrajetsCard extends HTMLElement {
     }
     const a = st.attributes || {};
     if (Array.isArray(a.directions)) return this._renderStation(conf, st);
-    if (Array.isArray(a.departs) || Array.isArray(a.departures)) return this._renderBus(conf, st);
+    if (Array.isArray(a.departs) || Array.isArray(a.departures)) {
+      // Ligne à l'arrêt : alerte en tête, encart réduit et grisé pour garder le repère
+      return this._busSuspended(a) ? this._renderBusSuspended(conf, st) : this._renderBus(conf, st);
+    }
     if ("perturbation" in a && a.line_code) return this._renderLine(conf, st);
     if ("velos_disponibles" in a) return this._renderBike(conf, st);
     if ("occupation_pct" in a || ("capacite" in a && "places_libres" in a)) return this._renderParking(conf, st);
@@ -231,14 +261,35 @@ class StarTrajetsCard extends HTMLElement {
         ${next[1] ? `<div class="small soft">puis ${esc(this._fmtWait(next[1].t))}</div>` : ""}`;
     }
 
+    // Report d'arrêt, déviation… : dans l'encart, seulement pour le sens concerné
+    const infos = (a.alertes || []).filter((x) => x.type !== "suspension" && x.ce_sens !== false);
+    const infoHtml = infos.map((x) => `
+        <div class="bus-info">
+          <ha-icon icon="mdi:sign-direction"></ha-icon>
+          <div><span class="strong">${esc(x.titre)}</span> · ${esc(x.description)}</div>
+        </div>`).join("");
     return `
-      <div class="tile bus">
-        <span class="bus-badge">${esc(line)}</span>
-        <div class="text">
-          <div class="strong">${esc(stop)}</div>
-          <div class="small soft">vers ${esc(a.destination)}</div>
+      <div class="tile bus-tile">
+        <div class="bus">
+          <span class="bus-badge">${esc(line)}</span>
+          <div class="text">
+            <div class="strong">${esc(stop)}</div>
+            <div class="small soft">vers ${esc(a.destination)}</div>
+          </div>
+          <div class="right">${right}</div>
         </div>
-        <div class="right">${right}</div>
+        ${infoHtml}
+      </div>`;
+  }
+
+  _renderBusSuspended(conf, st) {
+    const a = st.attributes;
+    const stop = conf.name || a.stop_name || a.friendly_name;
+    return `
+      <div class="tile bus suspended" title="vers ${esc(a.destination)}">
+        <span class="bus-badge">${esc(a.ligne || "")}</span>
+        <div class="text"><div class="strong">${esc(stop)} <span class="small soft">vers ${esc(a.destination)}</span></div></div>
+        <div class="right small nowrap">ligne à l'arrêt</div>
       </div>`;
   }
 
@@ -449,6 +500,19 @@ StarTrajetsCard.styles = `
     padding: 4px 6px; border-radius: 6px;
     background: rgba(127, 127, 127, 0.25); color: var(--primary-text-color);
   }
+  .bus-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; max-width: 110px; flex: none; }
+  .perturbation .small { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .bus-badge.alert { background: rgba(229, 57, 53, 0.25); }
+  .tile.suspended { opacity: 0.55; padding-top: 7px; padding-bottom: 7px; }
+  .tile.suspended .strong { font-weight: 500; }
+  .bus-info {
+    display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; padding: 7px 9px;
+    border-radius: 8px; font-size: 12.5px; line-height: 1.35;
+    background: rgba(245, 166, 35, 0.12); color: var(--primary-text-color);
+    --mdc-icon-size: 16px;
+  }
+  .bus-info ha-icon { color: var(--star-warn-text); flex: none; margin-top: 1px; }
+  .bus-info .strong { color: var(--star-warn-text); }
   .right { text-align: right; }
   .wait { font-size: 20px; font-weight: 700; color: var(--primary-text-color); line-height: 1.1; white-space: nowrap; }
   .wait.soft { color: var(--secondary-text-color); }

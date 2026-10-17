@@ -205,6 +205,8 @@ class StarMetroStationSensor(_StarMetroEntity):
             "etats_par_ligne": station.get("states_by_line"),
             "fermee": station.get("closed", False),
             "lignes_fermees": station.get("closed_lines", []),
+            # Fermeture déduite : tous les ascenseurs et escaliers HS (non publiée par STAR)
+            "fermeture_deduite": station.get("closed_by_equipment", []),
             # Pour la carte : par direction, ascenseurs / escaliers / distributeurs
             "directions": station.get("directions", []),
             # Prochains départs par sens (horaires théoriques GTFS)

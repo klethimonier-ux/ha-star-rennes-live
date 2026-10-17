@@ -2,7 +2,7 @@
 
 Intégration Home Assistant pour le réseau **STAR** de Rennes : métro en temps réel, bus, vélos en libre-service et parcs relais, avec deux cartes Lovelace prêtes à l'emploi.
 
-[![Version](https://img.shields.io/github/v/release/klethimonier-ux/ha-star-rennes-live?label=version)](https://github.com/klethimonier-ux/ha-star-rennes-live/releases/latest)
+[![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fklethimonier-ux%2Fha-star-rennes-live%2Fmain%2Fcustom_components%2Fstar_rennes_live%2Fmanifest.json&query=%24.version&label=version&prefix=v&color=blue)](https://github.com/klethimonier-ux/ha-star-rennes-live/releases/latest)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
 [![Validation](https://github.com/klethimonier-ux/ha-star-rennes-live/actions/workflows/validate.yml/badge.svg)](https://github.com/klethimonier-ux/ha-star-rennes-live/actions/workflows/validate.yml)
 [![Auteur](https://img.shields.io/badge/auteur-klethimonier--ux-181717?logo=github)](https://github.com/klethimonier-ux)
@@ -14,7 +14,7 @@ Intégration Home Assistant pour le réseau **STAR** de Rennes : métro en temps
 - Stations suivies : ouverte / fermée, ascenseurs et escaliers par direction, **deux prochains passages en temps réel**, avec l'**affluence** de chaque rame quand STAR la publie.
 - Schéma des deux lignes avec la **position des rames en temps réel** (reconstituée à partir des prochains passages publiés par STAR, horaires GTFS en secours).
 
-**Bus** : prochains départs d'un arrêt dans une direction, temps réel ou horaire théorique.
+**Bus** : prochains départs d'un arrêt dans une direction, temps réel ou horaire théorique, et **alertes trafic** de la ligne : une ligne à l'arrêt (manifestation, grève…) est signalée en tête de carte, un report d'arrêt ou une déviation s'affiche dans l'encart du sens concerné.
 
 **Le vélo STAR** : vélos et places disponibles par station, état (ouverte, en panne, maintenance, fermée).
 

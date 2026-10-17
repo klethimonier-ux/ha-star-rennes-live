@@ -18,6 +18,7 @@ from ..const import (
     SENS_KEY,
     ICON_URL_KEY,
 )
+from ..api.alerts_api import alerts_for_line, concerns_direction
 from ..coordinator_bus import StarBusCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,8 +26,9 @@ _LOGGER = logging.getLogger(__name__)
 
 def create_bus_entities(hass, entry):
     """Création des entités Bus (coordinators créés et rafraîchis dans __init__)."""
-    coordinators = hass.data[DOMAIN][entry.entry_id].get("bus", [])
-    return [StarBusSensor(coordinator) for coordinator in coordinators]
+    data = hass.data[DOMAIN][entry.entry_id]
+    alerts = data.get("alerts")
+    return [StarBusSensor(coordinator, alerts) for coordinator in data.get("bus", [])]
 
 
 
@@ -35,11 +37,12 @@ class StarBusSensor(CoordinatorEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     # Ces listes changent à chaque mise à jour : inutile de les historiser
-    _unrecorded_attributes = frozenset({"departures", "departs", "prochains_departs_min"})
+    _unrecorded_attributes = frozenset({"departures", "departs", "prochains_departs_min", "alertes"})
 
-    def __init__(self, coordinator: StarBusCoordinator):
+    def __init__(self, coordinator: StarBusCoordinator, alerts=None):
         super().__init__(coordinator)
         self._coordinator = coordinator
+        self._alerts = alerts  # AlertsCoordinator (facultatif)
 
         self._attr_name = f"{coordinator.stop_name} → {coordinator.destination}"
         self._attr_unique_id = (
@@ -78,7 +81,32 @@ class StarBusSensor(CoordinatorEntity, SensorEntity):
             # Calculé à chaque mise à jour (toutes les 60 s)
             "prochains_departs_min": minutes,
             "temps_reel": data.get("next_realtime"),
+            # Alertes trafic en cours sur la ligne (déviation, manifestation…)
+            "alertes": self._line_alerts(),
         }
+
+    def _line_alerts(self) -> list[dict[str, Any]]:
+        alerts = getattr(self._alerts, "data", None) or []
+        return [
+            {
+                "titre": a["titre"],
+                "description": a["description"],
+                "niveau": a["niveau"],
+                "bloquante": a["bloquante"],
+                # suspension : ligne arrêtée ; info : report d'arrêt, déviation…
+                "type": a["type"],
+                "directions": a["directions"],
+                "ce_sens": concerns_direction(a, self._coordinator.destination),
+                "lignes": a["lignes"],
+                "fin": a["fin"],
+            }
+            for a in alerts_for_line(alerts, self._coordinator.line_name)
+        ]
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._alerts is not None:
+            self.async_on_remove(self._alerts.async_add_listener(self._handle_coordinator_update))
 
     @property
     def entity_picture(self) -> str | None:

@@ -103,6 +103,9 @@ class FakeSession:
             wanted = set(re.findall(r'idstation="([^"]*)"', where))
             self.assertion_where = where
             rows = [r for r in rows if r.get("idstation") in wanted]
+        if where and dataset == "tco-busmetro-trafic-alertes-tr" and where.startswith("nomcourtligne="):
+            wanted = set(re.findall(r'nomcourtligne="([^"]*)"', where))
+            rows = [r for r in rows if r.get("nomcourtligne") in wanted]
         return FakeResp(200, {"total_count": len(rows), "results": rows[offset:offset + limit]})
 
     def datasets(self):
@@ -197,7 +200,10 @@ class SetupTests(unittest.TestCase):
     def test_bus_only_queries_only_bus(self):
         bus = {"line_id": "0001", "line_code": "C1", "stop_name": "République", "dest_name": "Cesson", "sens": 0, "icon_url": ""}
         hass, entry, session, added = setup_entry({"bus": True, "bus_entries": [bus]})
-        self.assertEqual(session.datasets(), ["tco-bus-circulation-passages-tr"])
+        # passages + alertes trafic de la ligne suivie
+        self.assertEqual(sorted(session.datasets()), ["tco-bus-circulation-passages-tr", "tco-busmetro-trafic-alertes-tr"])
+        alert_call = next(c for c in session.calls if c[0] == "tco-busmetro-trafic-alertes-tr")
+        self.assertEqual(alert_call[1]["where"], 'nomcourtligne="C1"')
         coords = hass.data[DOMAIN][entry.entry_id]
         self.assertNotIn("metro", coords)
         self.assertNotIn("bike", coords)
@@ -207,7 +213,10 @@ class SetupTests(unittest.TestCase):
 
     def test_metro_lines_only(self):
         hass, entry, session, added = setup_entry({"metro": True, "metro_lines": ["A"], "metro_stations": []})
-        self.assertEqual(sorted(session.datasets()), ["tco-metro-lignes-etat-tr", "tco-metro-stations-etat-tr"])
+        # lignes + stations + équipements de tout le réseau (fermetures déduites, sans filtre)
+        datasets = sorted(set(session.datasets()))
+        self.assertEqual(datasets, ["tco-metro-equipements-etat-tr", "tco-metro-lignes-etat-tr", "tco-metro-stations-etat-tr"])
+        self.assertTrue(all("where" not in c[1] or c[1]["where"] is None for c in session.calls if c[0] == "tco-metro-equipements-etat-tr"))
         self.assertEqual([e._attr_name for e in added], ["STAR Perturbations", "Métro Ligne A"])
         self.assertEqual(added[0].native_value, 0)
         line = added[1].extra_state_attributes
@@ -223,13 +232,17 @@ class SetupTests(unittest.TestCase):
             {"metro": True, "metro_lines": ["B"], "metro_stations": ["S3"]}
         )
         # 1er cycle : topologie + lignes + stations RT + équipements filtrés (1 page)
+        # + équipements de tout le réseau (fermetures déduites, en cache 5 min)
         first = sorted(session.datasets())
         self.assertEqual(first.count("tco-metro-topologie-stations-td"), 1)
-        self.assertEqual(first.count("tco-metro-equipements-etat-tr"), 1)
-        self.assertEqual(len(first), 5)  # + temps réel métro (prochains passages)
+        equip_calls = [c for c in session.calls if c[0] == "tco-metro-equipements-etat-tr"]
+        filtered = [c for c in equip_calls if c[1].get("where")]
+        network_pages = len(equip_calls) - len(filtered)
+        self.assertEqual(len(filtered), 1)
+        self.assertGreaterEqual(network_pages, 1)
+        self.assertEqual(len(first), 5 + network_pages)  # + temps réel métro (prochains passages)
         self.assertIn("tco-metro-circulation-deux-prochains-passages-tr", first)
-        equip_call = next(c for c in session.calls if c[0] == "tco-metro-equipements-etat-tr")
-        self.assertEqual(equip_call[1]["where"], 'idstation="S3"')
+        self.assertEqual(filtered[0][1]["where"], 'idstation="S3"')
 
         names = [e._attr_name for e in added]
         self.assertIn("Métro Ligne B", names)
@@ -470,7 +483,8 @@ class CardDataTests(unittest.TestCase):
             {"depart": "2026-10-14T19:12:48+00:00", "temps_reel": True},
             {"depart": "2026-10-14T19:27:00+00:00", "temps_reel": False},
         ])
-        self.assertIn("precision", session.calls[-1][1]["select"])
+        passages_call = next(c for c in session.calls if c[0] == "tco-bus-circulation-passages-tr")
+        self.assertIn("precision", passages_call[1]["select"])
 
     def test_card_registered(self):
         from custom_components.star_rennes_live import async_setup, CARD_URL
@@ -569,6 +583,145 @@ class ConfigFlowTests(unittest.TestCase):
         self.assertEqual(r["data"]["api_key"], "GOOD")
         self.assertEqual(r["data"]["bus_entries"][0]["sens"], 1)
         self.assertTrue(all(c[2] == {"Authorization": "Apikey GOOD"} for c in session.calls[1:]))
+
+
+class DeducedClosureTests(unittest.TestCase):
+    """Station fermée non publiée par STAR : tous les ascenseurs et escaliers HS."""
+
+    def eq(self, eid, sid, kind, state, line="A", name="Quai vers Kennedy"):
+        return {"id": eid, "station_id": sid, "station_name": "République", "type_short": kind,
+                "state": state, "line_code": line, "name": name}
+
+    def test_all_access_hs_closes_station(self):
+        from custom_components.star_rennes_live.api.metro_api import build_metro_structure
+
+        rt = {"R": {"id": "R", "name": "République", "states_by_line": {"A": "Ouverte"}, "state": "Ouverte", "lastupdate": None}}
+        equipments = {
+            "1": self.eq("1", "R", "ASC", "Hors service"),
+            "2": self.eq("2", "R", "ESC", "Hors service"),
+            "3": self.eq("3", "R", "ESC", "En panne"),
+            "4": self.eq("4", "R", "DAT", "En fonctionnement"),  # distributeur : ne compte pas
+        }
+        topo = {"R": {"id": "R", "name": "République", "line_code": "A"}}
+        data = build_metro_structure({}, topo, rt, equipments)
+        station = data["stations"]["R"]
+        self.assertEqual(station["state"], "Fermée")
+        self.assertTrue(station["closed"])
+        self.assertEqual(station["closed_by_equipment"], ["A"])
+        p = data["perturbations"][0]
+        self.assertEqual(p["titre"], "Station République fermée")
+        self.assertTrue(p["deduite"])
+        self.assertIn("ascenseurs et escaliers", p["detail"])
+        self.assertEqual(rt["R"]["state"], "Ouverte")  # l'entrée d'origine n'est pas modifiée
+
+    def test_partial_or_unknown_keeps_open(self):
+        from custom_components.star_rennes_live.api.metro_api import access_closed_lines
+
+        self.assertEqual(access_closed_lines([self.eq("1", "R", "ASC", "Hors service"),
+                                              self.eq("2", "R", "ESC", "En fonctionnement")]), [])
+        self.assertEqual(access_closed_lines([self.eq("1", "R", "ASC", "Hors service"),
+                                              self.eq("2", "R", "ESC", "Inconnu")]), [])
+        # Un seul équipement HS : pas assez pour conclure
+        self.assertEqual(access_closed_lines([self.eq("1", "R", "ASC", "Hors service")]), [])
+
+    def test_interchange_closed_on_one_line_only(self):
+        from custom_components.star_rennes_live.api.metro_api import build_metro_structure
+
+        rt = {"G": {"id": "G", "name": "Gares", "states_by_line": {"A": "Ouverte", "B": "Ouverte"}, "state": "Ouverte", "lastupdate": None}}
+        equipments = {
+            "1": self.eq("1", "G", "ASC", "Hors service", "B"), "2": self.eq("2", "G", "ESC", "Hors service", "B"),
+            "3": self.eq("3", "G", "ASC", "En fonctionnement", "A"), "4": self.eq("4", "G", "ESC", "Hors service", "A"),
+        }
+        data = build_metro_structure({}, {}, rt, equipments)
+        p = data["perturbations"][0]
+        self.assertEqual(p["lignes"], ["B"])
+        self.assertIn("Ligne b", p["detail"])
+
+    def test_station_missing_from_realtime_is_created(self):
+        from custom_components.star_rennes_live.api.metro_api import apply_access_closures
+
+        result = apply_access_closures({}, [self.eq("1", "X", "ASC", "Hors service", "B"),
+                                            self.eq("2", "X", "ESC", "Hors service", "B")])
+        self.assertEqual(result["X"]["states_by_line"], {"B": "Fermée"})
+        self.assertEqual(result["X"]["name"], "République")
+
+
+class TrafficAlertsTests(unittest.TestCase):
+    """Alertes trafic réelles du 17/10/2026 : manifestation, tous les bus arrêtés."""
+
+    def records(self):
+        import json
+        return json.load(open(HERE / "fixture_alertes.json", encoding="utf-8"))["results"]
+
+    def test_grouped_and_active(self):
+        from custom_components.star_rennes_live.api.alerts_api import active_alerts, alerts_for_line
+
+        now = datetime(2026, 10, 17, 13, 43, tzinfo=timezone.utc)
+        alerts = active_alerts(self.records(), now)
+        # Suspensions d'abord
+        self.assertEqual([a["titre"] for a in alerts], ["Manifestation", "Arrêt TNB"])
+        manif = alerts[0]
+        self.assertEqual(manif["type"], "suspension")
+        self.assertTrue(manif["bloquante"])
+        self.assertEqual(manif["lignes"][:4], ["C1", "C2", "C3", "C4"])
+        self.assertIn("54", manif["lignes"])
+        self.assertEqual(len(manif["lignes"]), 19)  # une seule alerte pour 19 fiches
+        tnb = alerts[1]
+        self.assertEqual(tnb["type"], "info")  # « Bloquante » aussi, mais simple report d'arrêt
+        self.assertEqual(tnb["directions"], ["Roazhon Park/ZI Ouest"])
+        self.assertEqual(tnb["description"], "Pendant plusieurs mois · Ligne 11 vers Roazhon Park/ZI Ouest · L'arrêt TNB est reporté à l'arrêt République.")
+        self.assertEqual([a["titre"] for a in alerts_for_line(alerts, "11")], ["Manifestation", "Arrêt TNB"])
+        self.assertEqual([a["titre"] for a in alerts_for_line(alerts, "C4")], ["Manifestation"])
+        # Le soir, la manifestation est terminée (fin 21:59 UTC) ; TNB court jusqu'au 31/12
+        later = active_alerts(self.records(), datetime(2026, 10, 17, 22, 30, tzinfo=timezone.utc))
+        self.assertEqual([a["titre"] for a in later], ["Arrêt TNB"])
+        # Pas encore commencée
+        before = active_alerts(self.records(), datetime(2026, 9, 1, tzinfo=timezone.utc))
+        self.assertEqual(before, [])
+
+    def test_bus_sensor_exposes_line_alerts(self):
+        import homeassistant.util.dt as dt_util
+        db = make_db()
+        db["tco-busmetro-trafic-alertes-tr"] = self.records()
+        dt_util._now[0] = datetime(2026, 10, 17, 13, 43, tzinfo=timezone.utc)
+        try:
+            buses = [
+                {"line_id": "0004", "line_code": "C4", "stop_name": "République", "dest_name": "Grand Quartier", "sens": 0, "icon_url": ""},
+                {"line_id": "0011", "line_code": "11", "stop_name": "République", "dest_name": "Roazhon Park", "sens": 0, "icon_url": ""},
+            ]
+            hass, entry, session, added = setup_entry({"bus": True, "bus_entries": buses}, FakeSession(db))
+            by_line = {e.extra_state_attributes["ligne"]: e.extra_state_attributes["alertes"] for e in added}
+        finally:
+            dt_util._now[0] = None
+        alert_calls = [c for c in session.calls if c[0] == "tco-busmetro-trafic-alertes-tr"]
+        self.assertEqual(len(alert_calls), 1)  # une seule requête pour toutes les lignes
+        self.assertEqual([a["titre"] for a in by_line["C4"]], ["Manifestation"])
+        self.assertEqual(by_line["C4"][0]["lignes"], ["C4", "11"])  # seulement les lignes suivies
+        self.assertTrue(by_line["C4"][0]["bloquante"])
+        self.assertEqual([a["titre"] for a in by_line["11"]], ["Manifestation", "Arrêt TNB"])
+        tnb = by_line["11"][1]
+        self.assertEqual((tnb["type"], tnb["ce_sens"]), ("info", True))  # bus 11 vers Roazhon Park
+
+    def test_suspension_and_direction_rules(self):
+        from custom_components.star_rennes_live.api.alerts_api import is_suspension, concerns_direction
+
+        self.assertTrue(is_suspension("Manifestation", "Arrêt de circulation de toutes les lignes de BUS jusqu'à nouvel ordre."))
+        self.assertTrue(is_suspension("Incident", "La circulation est interrompue entre Gares et Clemenceau"))
+        self.assertTrue(is_suspension("Grève", "Les bus de la ligne 9 ne circulent pas"))
+        self.assertFalse(is_suspension("Arrêt TNB", "L'arrêt TNB est reporté à l'arrêt République."))
+        self.assertFalse(is_suspension("Travaux", "Déviation de la ligne C4 rue de Paris"))
+        tnb = {"directions": ["Roazhon Park/ZI Ouest"]}
+        self.assertTrue(concerns_direction(tnb, "Roazhon Park"))
+        self.assertTrue(concerns_direction(tnb, "ZI Ouest"))
+        self.assertFalse(concerns_direction(tnb, "Saint-Laurent"))
+        self.assertTrue(concerns_direction({"directions": []}, "Saint-Laurent"))  # pas de sens cité : les deux
+
+    def test_alerts_failure_does_not_block_buses(self):
+        db = make_db()
+        db.pop("tco-busmetro-trafic-alertes-tr", None)
+        bus = {"line_id": "0001", "line_code": "C1", "stop_name": "République", "dest_name": "Cesson", "sens": 0, "icon_url": ""}
+        hass, entry, session, added = setup_entry({"bus": True, "bus_entries": [bus]}, FakeSession(db))
+        self.assertEqual(added[0].extra_state_attributes["alertes"], [])
 
 
 if __name__ == "__main__":
