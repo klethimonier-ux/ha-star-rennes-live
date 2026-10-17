@@ -401,7 +401,7 @@ def trains_window(
     """
     t_now = now.timestamp()
     t0 = int(t_now)
-    running = {code: 0 for code in schedule.lines}
+    running = dict.fromkeys(schedule.lines, 0)
     trains: list[dict] = []
     for base, trip in _service_trips(schedule, now):
         first = base + trip.stops[0][1]

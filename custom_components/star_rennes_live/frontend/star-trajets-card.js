@@ -717,7 +717,7 @@ class StarMetroCard extends HTMLElement {
       const a = st.attributes || {};
       const t0 = (a.t0 || 0) * 1000;
       const wanted = Array.isArray(this._config.lignes) ? this._config.lignes.map((c) => String(c).toUpperCase()) : null;
-      const codes = (wanted || Object.keys(a.lignes || {}).sort()).filter((c) => a.lignes?.[c]);
+      const codes = (wanted || Object.keys(a.lignes || {}).sort((x, y) => x.localeCompare(y))).filter((c) => a.lignes?.[c]);
 
       this._trains = (a.rames || []).map((r) => ({
         line: r.l,

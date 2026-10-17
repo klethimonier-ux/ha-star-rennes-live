@@ -9,7 +9,9 @@ from .metro.sensor import create_metro_entities, create_metro_trains_entities
 from .parking.sensor import create_parking_entities
 
 
-async def async_setup_entry(
+# Home Assistant attend une coroutine pour le point d'entrée d'une plateforme,
+# même sans await à l'intérieur.
+async def async_setup_entry(  # NOSONAR
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ):
     entities = []
