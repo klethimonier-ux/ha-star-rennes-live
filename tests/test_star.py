@@ -651,7 +651,7 @@ class TrafficAlertsTests(unittest.TestCase):
 
     def records(self):
         import json
-        return json.load(open(HERE / "fixture_alertes.json", encoding="utf-8"))["results"]
+        return json.loads((HERE / "fixture_alertes.json").read_text(encoding="utf-8"))["results"]
 
     def test_grouped_and_active(self):
         from custom_components.star_rennes_live.api.alerts_api import active_alerts, alerts_for_line

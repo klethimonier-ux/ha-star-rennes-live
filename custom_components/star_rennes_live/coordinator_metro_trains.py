@@ -155,15 +155,26 @@ class MetroTrainsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise gtfs_error or UpdateFailed("Ni temps réel ni horaires disponibles pour le métro")
 
         t0 = int(now.timestamp())
+        trains, running, sources = self._trains(now, realtime, t0)
+        return {
+            "passages": self._passages(now, realtime),
+            "realtime": realtime is not None,
+            "t0": t0,
+            "trains": trains,
+            "running": running,
+            "lines": self._lines(sources),
+            "loaded_at": self._loaded_at.isoformat() if self._loaded_at else None,
+        }
 
-        # Prochains passages : temps réel, sinon horaires théoriques
+    def _passages(self, now: datetime, realtime: list | None) -> dict[str, list[dict]]:
+        """Prochains passages : temps réel, sinon horaires théoriques (heures ISO)."""
         passages: dict[str, list[dict]] = {}
         if self._schedule is not None:
             for station, items in next_departures(self._schedule, now).items():
                 passages[station] = [{**p, "temps_reel": False} for p in items]
         if realtime is not None:
             passages.update(passages_by_station(realtime, now))
-        passages = {
+        return {
             station: [
                 {**p, "departs": [dt_util.utc_from_timestamp(t).isoformat() for t in p["departs"]]}
                 for p in items
@@ -171,52 +182,44 @@ class MetroTrainsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for station, items in passages.items()
         }
 
-        # Rames : temps réel par ligne quand il est disponible, sinon GTFS
+    def _trains(self, now: datetime, realtime: list | None, t0: int) -> tuple[list[dict], dict[str, int], dict[str, str]]:
+        """Rames : temps réel par ligne quand il est disponible, sinon GTFS.
+
+        Retourne (rames, rames en circulation par ligne, source par ligne).
+        """
+        if self._schedule is None:
+            return [], {}, {}
+        _, theoretical, _ = trains_window(self._schedule, now)
+        live = build_realtime_trains(realtime, self._schedule, now) if realtime else {}
         trains: list[dict] = []
-        running: dict[str, int] = {}
         sources: dict[str, str] = {}
-        if self._schedule is not None:
-            _, theoretical, _ = trains_window(self._schedule, now)
-            live = build_realtime_trains(realtime, self._schedule, now) if realtime else {}
-            for code in self._schedule.lines:
-                if live.get(code):
-                    sources[code] = "temps_reel"
-                    for train in live[code]:
-                        trains.append(
-                            {
-                                "l": code,
-                                "h": train["h"],
-                                "d": train["d"],
-                                "s": [[i, int(a - t0), int(d - t0)] for i, a, d in train["s"]],
-                            }
-                        )
-                else:
-                    sources[code] = "horaires_theoriques"
-                    trains.extend(t for t in theoretical if t["l"] == code)
-            for code in self._schedule.lines:
-                running[code] = sum(
-                    1 for t in trains if t["l"] == code and train_position(t["s"], 0) is not None
+        for code in self._schedule.lines:
+            if live.get(code):
+                sources[code] = "temps_reel"
+                trains.extend(
+                    {"l": code, "h": t["h"], "d": t["d"], "s": [[i, int(a - t0), int(d - t0)] for i, a, d in t["s"]]}
+                    for t in live[code]
                 )
+            else:
+                sources[code] = "horaires_theoriques"
+                trains.extend(t for t in theoretical if t["l"] == code)
+        running = {
+            code: sum(1 for t in trains if t["l"] == code and train_position(t["s"], 0) is not None)
+            for code in self._schedule.lines
+        }
+        return trains, running, sources
 
-        lines = {}
-        if self._schedule is not None:
-            lines = {
-                code: {
-                    "nom": line.name,
-                    "couleur": line.color,
-                    "stations": line.stations,
-                    "codes": [station_code(n, self._codes) for n in line.stations],
-                    "source": sources.get(code),
-                }
-                for code, line in self._schedule.lines.items()
-            }
-
+    def _lines(self, sources: dict[str, str]) -> dict[str, dict]:
+        """Description des lignes pour la carte (stations, acronymes, source des rames)."""
+        if self._schedule is None:
+            return {}
         return {
-            "passages": passages,
-            "realtime": realtime is not None,
-            "t0": t0,
-            "trains": trains,
-            "running": running,
-            "lines": lines,
-            "loaded_at": self._loaded_at.isoformat() if self._loaded_at else None,
+            code: {
+                "nom": line.name,
+                "couleur": line.color,
+                "stations": line.stations,
+                "codes": [station_code(n, self._codes) for n in line.stations],
+                "source": sources.get(code),
+            }
+            for code, line in self._schedule.lines.items()
         }

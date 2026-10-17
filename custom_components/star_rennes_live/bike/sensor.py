@@ -6,7 +6,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.core import HomeAssistant
 
-from ..const import DOMAIN
+from ..const import DOMAIN, MANUFACTURER
 from ..coordinator_bike import BikeCoordinator
 
 
@@ -14,7 +14,7 @@ from ..coordinator_bike import BikeCoordinator
 #  FACTORY
 # ---------------------------------------------------------------------------
 
-async def create_bike_entities(hass: HomeAssistant, entry, config):
+def create_bike_entities(hass: HomeAssistant, entry, config):
     station_ids = config.get("bike_stations", [])
 
     # Le coordinator n'existe que si au moins une station est suivie
@@ -26,7 +26,7 @@ async def create_bike_entities(hass: HomeAssistant, entry, config):
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, "bike_root")},
         name="STAR Vélo",
-        manufacturer="STAR Rennes",
+        manufacturer=MANUFACTURER,
         model="Réseau vélo",
     )
 
@@ -57,7 +57,7 @@ class StarBikePlaceholderSensor(SensorEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, "bike_root")},
             name="STAR Vélo",
-            manufacturer="STAR Rennes",
+            manufacturer=MANUFACTURER,
             model="Réseau vélo",
         )
 
@@ -136,7 +136,7 @@ class StarBikeStationSensor(SensorEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, f"bike_station_{self.station_id}")},
             name=self.station.get("name", f"Station {self.station_id}"),
-            manufacturer="STAR Rennes",
+            manufacturer=MANUFACTURER,
             model="Station vélo",
             via_device=(DOMAIN, "bike_root"),
         )

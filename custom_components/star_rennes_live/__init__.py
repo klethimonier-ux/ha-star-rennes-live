@@ -34,7 +34,7 @@ CARD_FILE = Path(__file__).parent / "frontend" / "star-trajets-card.js"
 CARD_URL = f"/{DOMAIN}/star-trajets-card.js"
 
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
     """Rend la carte custom:star-trajets-card disponible dans les tableaux de bord."""
     # La date du fichier sert de version : le navigateur recharge la carte
     # dès qu'elle change, sans vider le cache à la main.

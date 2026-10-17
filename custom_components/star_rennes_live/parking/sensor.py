@@ -6,7 +6,7 @@ from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.core import HomeAssistant
 
-from ..const import DOMAIN
+from ..const import DOMAIN, MANUFACTURER
 from ..coordinator_parking import ParkingCoordinator
 
 
@@ -14,7 +14,7 @@ from ..coordinator_parking import ParkingCoordinator
 #  FACTORY
 # ---------------------------------------------------------------------------
 
-async def create_parking_entities(hass: HomeAssistant, entry, config):
+def create_parking_entities(hass: HomeAssistant, entry, config):
     """Create all parking-related entities for the selected parkings."""
 
     parking_ids = config.get("parking_ids", [])
@@ -63,7 +63,7 @@ class StarParkingBase:
         return DeviceInfo(
             identifiers={(DOMAIN, f"parking_{self.parking_id}")},
             name=f"Parc relais {prename}",
-            manufacturer="STAR Rennes",
+            manufacturer=MANUFACTURER,
             model="Parc relais",
         )
 

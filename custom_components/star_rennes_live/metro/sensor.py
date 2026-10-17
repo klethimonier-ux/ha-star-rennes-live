@@ -10,7 +10,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from ..api.gtfs_metro import _normalize_name
 from ..api.metro_api import line_is_disrupted
-from ..const import DOMAIN
+from ..const import DOMAIN, MANUFACTURER
 from ..coordinator_metro import MetroCoordinator
 from ..icons import METRO_A_ICON, METRO_B_ICON, METRO_GENERIC_ICON
 
@@ -21,7 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 #  FACTORY : appelée depuis sensor.py (racine)
 # ---------------------------------------------------------------------------
 
-async def create_metro_entities(hass: HomeAssistant, entry, config):
+def create_metro_entities(hass: HomeAssistant, entry, config):
     """Create metro entities for the selected lines and stations only."""
 
     coordinator: MetroCoordinator | None = hass.data[DOMAIN][entry.entry_id].get("metro")
@@ -129,7 +129,7 @@ class StarMetroLineSensor(_StarMetroEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, f"metro_line_{self._line_code}")},
             name=f"STAR Métro – Ligne {self._line_code}",
-            manufacturer="STAR Rennes",
+            manufacturer=MANUFACTURER,
             model="Ligne de métro",
         )
 
@@ -222,7 +222,7 @@ class StarMetroStationSensor(_StarMetroEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, f"metro_station_{self._station_id}")},
             name=f"Station de métro {self._station_name}",
-            manufacturer="STAR Rennes",
+            manufacturer=MANUFACTURER,
             model="Station de métro",
         )
 
@@ -338,7 +338,7 @@ class StarMetroPerturbationsSensor(_StarMetroEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, "metro_network")},
             name="STAR Métro – Réseau",
-            manufacturer="STAR Rennes",
+            manufacturer=MANUFACTURER,
             model="Réseau métro",
         )
 
@@ -396,6 +396,6 @@ class StarMetroTrainsSensor(CoordinatorEntity, SensorEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, "metro_network")},
             name="STAR Métro – Réseau",
-            manufacturer="STAR Rennes",
+            manufacturer=MANUFACTURER,
             model="Réseau métro",
         )

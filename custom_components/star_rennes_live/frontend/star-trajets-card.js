@@ -14,7 +14,7 @@
  */
 
 (() => {
-const CARD_VERSION = "1.10.0";
+const CARD_VERSION = "1.10.1";
 
 // Affluence publiée par STAR pour chaque rame (couleur de remplissage)
 const CROWD_LEVELS = {
@@ -23,6 +23,18 @@ const CROWD_LEVELS = {
   "orange": [3, "warn", "Forte affluence"],
   "rouge": [3, "bad", "Très forte affluence"],
 };
+
+// Couleur de jauge : vélos disponibles, puis taux d'occupation d'un parc relais
+function bikeLevel(bikes, total) {
+  if (!total) return "neutral";
+  if (bikes === 0) return "bad";
+  return bikes / total < 0.2 ? "warn" : "ok";
+}
+
+function parkingLevel(occupation) {
+  if (occupation >= 0.9) return "bad";
+  return occupation >= 0.7 ? "warn" : "ok";
+}
 
 function crowdHtml(fill) {
   if (!fill) return "";
@@ -39,6 +51,9 @@ const CATEGORY_LABELS = {
   escaliers: ["Escalator", "Escalators"],
   distributeurs: ["Distributeur", "Distributeurs"],
 };
+
+// « 3 rames », « 1 vélo » : pluriel sans gabarit imbriqué
+const plural = (n, word) => (n > 1 ? word + "s" : word);
 
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({
@@ -179,15 +194,12 @@ class StarTrajetsCard extends HTMLElement {
 
     const perturbations = this._perturbations();
     const rows = this._config.entities.map((conf) => this._renderEntity(conf)).join("");
-    const realtime = this._config.entities.some((conf) => {
-      const a = this._state(conf.entity)?.attributes;
-      return a && a.temps_reel === true;
-    });
+    const realtime = this._config.entities.some((conf) => this._state(conf.entity)?.attributes?.temps_reel === true);
 
     let status = "";
     if (perturbations.length) {
       const n = perturbations.length;
-      status = `<span class="pill warn">${n} perturbation${n > 1 ? "s" : ""}</span>`;
+      status = `<span class="pill warn">${n} ${plural(n, "perturbation")}</span>`;
     } else if (realtime) {
       status = `<span class="muted small">temps réel</span>`;
     }
@@ -210,11 +222,7 @@ class StarTrajetsCard extends HTMLElement {
 
   _renderPerturbation(p) {
     const critical = p.niveau === "critique";
-    const badge = p.type === "ligne" && p.ligne
-      ? this._lineBadge(p.ligne)
-      : p.type === "bus"
-      ? `<span class="bus-badges">${p.busLines.map((l) => `<span class="bus-badge alert">${esc(l)}</span>`).join("")}</span>`
-      : `<span class="alert-icon"><ha-icon icon="mdi:alert-outline"></ha-icon></span>`;
+    const badge = this._perturbationBadge(p);
     return `
       <div class="perturbation ${critical ? "critical" : "warning"}">
         ${badge}
@@ -223,6 +231,15 @@ class StarTrajetsCard extends HTMLElement {
           ${p.detail ? `<div class="small soft">${esc(p.detail)}</div>` : ""}
         </div>
       </div>`;
+  }
+
+  _perturbationBadge(p) {
+    if (p.type === "ligne" && p.ligne) return this._lineBadge(p.ligne);
+    if (p.type === "bus") {
+      const badges = p.busLines.map((l) => '<span class="bus-badge alert">' + esc(l) + "</span>").join("");
+      return `<span class="bus-badges">${badges}</span>`;
+    }
+    return `<span class="alert-icon"><ha-icon icon="mdi:alert-outline"></ha-icon></span>`;
   }
 
   _renderEntity(conf) {
@@ -256,9 +273,10 @@ class StarTrajetsCard extends HTMLElement {
       right = `<div class="wait muted">—</div><div class="small muted">aucun passage</div>`;
     } else {
       const theoretical = next[0].rt === false;
+      const then = next[1] ? '<div class="small soft">puis ' + esc(this._fmtWait(next[1].t)) + "</div>" : "";
       right = `
         <div class="wait ${theoretical ? "soft" : ""}" title="${theoretical ? "Horaire théorique" : "Temps réel"}">${esc(this._fmtWait(next[0].t))}</div>
-        ${next[1] ? `<div class="small soft">puis ${esc(this._fmtWait(next[1].t))}</div>` : ""}`;
+        ${then}`;
     }
 
     // Report d'arrêt, déviation… : dans l'encart, seulement pour le sens concerné
@@ -311,26 +329,30 @@ class StarTrajetsCard extends HTMLElement {
     const docks = Number(a.places_libres);
     const known = Number.isFinite(bikes) && Number.isFinite(docks);
     const total = known ? bikes + docks : 0;
-    const open = st.state === "Ouvert";
-    const status = st.state === "unavailable" ? "Indisponible" : st.state;
-    const level = !known || !total ? "neutral" : bikes === 0 ? "bad" : bikes / total < 0.2 ? "warn" : "ok";
+    const fallback = `<span class="kind-badge"><ha-icon icon="mdi:bicycle"></ha-icon></span>`;
+    const right = known
+      ? `<div class="wait">${bikes}<span class="unit"> ${plural(bikes, "vélo")}</span></div>
+               <div class="small soft">${docks} ${plural(docks, "place")} ${plural(docks, "libre")}</div>`
+      : `<div class="small muted">—</div>`;
 
     return `
       <div class="tile bike">
         <div class="text">
-          <div class="station-head">${this._kindIcon(st, `<span class="kind-badge"><ha-icon icon="mdi:bicycle"></ha-icon></span>`)}<span class="strong">${esc(name)}</span></div>
-          ${open
-            ? `<div class="small soft">Le vélo STAR</div>`
-            : `<div class="small status-${st.state === "Maintenance" || st.state === "En panne" ? "warn" : "bad"}">${esc(status)}</div>`}
-          ${known && total ? this._gauge(bikes / total, level) : ""}
+          <div class="station-head">${this._kindIcon(st, fallback)}<span class="strong">${esc(name)}</span></div>
+          ${this._bikeStatus(st)}
+          ${known && total ? this._gauge(bikes / total, bikeLevel(bikes, total)) : ""}
         </div>
         <div class="right">
-          ${known
-            ? `<div class="wait">${bikes}<span class="unit"> vélo${bikes > 1 ? "s" : ""}</span></div>
-               <div class="small soft">${docks} place${docks > 1 ? "s" : ""} libre${docks > 1 ? "s" : ""}</div>`
-            : `<div class="small muted">—</div>`}
+          ${right}
         </div>
       </div>`;
+  }
+
+  _bikeStatus(st) {
+    if (st.state === "Ouvert") return `<div class="small soft">Le vélo STAR</div>`;
+    const tone = st.state === "Maintenance" || st.state === "En panne" ? "warn" : "bad";
+    const status = st.state === "unavailable" ? "Indisponible" : st.state;
+    return `<div class="small status-${tone}">${esc(status)}</div>`;
   }
 
   _renderParking(conf, st) {
@@ -341,25 +363,31 @@ class StarTrajetsCard extends HTMLElement {
     const capacity = Number(a.capacite);
     const known = Number.isFinite(free) && Number.isFinite(capacity) && capacity > 0;
     const occupation = known ? (capacity - free) / capacity : null;
-    const open = st.state === "Ouvert";
-    const level = occupation === null ? "neutral" : occupation >= 0.9 ? "bad" : occupation >= 0.7 ? "warn" : "ok";
+    const fallback = `<span class="kind-badge parking-badge">P</span>`;
+    const right = known
+      ? `<div class="wait">${free}<span class="unit"> ${plural(free, "place")}</span></div>
+               <div class="small soft">sur ${capacity}</div>`
+      : `<div class="small muted">—</div>`;
 
     return `
       <div class="tile parking">
         <div class="text">
-          <div class="station-head">${this._kindIcon(st, `<span class="kind-badge parking-badge">P</span>`)}<span class="strong">${esc(name)}</span></div>
-          ${open
-            ? `<div class="small soft">Parc relais${known ? ` · occupé à ${Math.round(occupation * 100)} %` : ""}</div>`
-            : `<div class="small status-bad">${esc(st.state === "unavailable" ? "Indisponible" : "Fermé")}</div>`}
-          ${known ? this._gauge(occupation, level) : ""}
+          <div class="station-head">${this._kindIcon(st, fallback)}<span class="strong">${esc(name)}</span></div>
+          ${this._parkingStatus(st, occupation)}
+          ${known ? this._gauge(occupation, parkingLevel(occupation)) : ""}
         </div>
         <div class="right">
-          ${known
-            ? `<div class="wait">${free}<span class="unit"> place${free > 1 ? "s" : ""}</span></div>
-               <div class="small soft">sur ${capacity}</div>`
-            : `<div class="small muted">—</div>`}
+          ${right}
         </div>
       </div>`;
+  }
+
+  _parkingStatus(st, occupation) {
+    if (st.state !== "Ouvert") {
+      return `<div class="small status-bad">${esc(st.state === "unavailable" ? "Indisponible" : "Fermé")}</div>`;
+    }
+    const rate = occupation === null ? "" : " · occupé à " + Math.round(occupation * 100) + " %";
+    return `<div class="small soft">Parc relais${rate}</div>`;
   }
 
   _renderLine(conf, st) {
@@ -616,7 +644,7 @@ function trainPosition(stops, now) {
 
 class StarMetroCard extends HTMLElement {
   setConfig(config) {
-    if (!config || !config.entity) {
+    if (!config?.entity) {
       throw new Error("star-metro-card : « entity » est obligatoire (capteur « STAR Métro – Rames »)");
     }
     // Terminus à quai unique : les deux voies se rejoignent avant la station
@@ -822,28 +850,35 @@ class StarMetroCard extends HTMLElement {
       const root = this.shadowRoot.querySelector(`.metro-line[data-line="${line.code}"]`);
       const geo = this._geometry?.[line.code];
       if (!root || !geo) continue;
-      let count = 0;
-      const dots = [];
-      for (const train of this._trains) {
-        if (train.line !== line.code) continue;
-        const pos = trainPosition(train.stops, now);
-        if (pos === null) continue;
-        count += 1;
-        const cx = PAD_SIDE + pos * geo.step;
-        let cy = train.forward ? geo.yTop : geo.yBottom;
-        // Entre la station voisine et un terminus à quai unique : la rame
-        // rejoint la voie commune
-        if (geo.singleStart && pos < 1) cy = geo.yMid + pos * (cy - geo.yMid);
-        if (geo.singleEnd && pos > geo.n - 2) cy = geo.yMid + (geo.n - 1 - pos) * (cy - geo.yMid);
-        dots.push(
-          `<circle cx="${cx.toFixed(1)}" cy="${cy}" r="4" class="train" style="stroke:${esc(line.color)}"><title>vers ${esc(train.headsign)}</title></circle>`
-        );
-      }
+      const dots = this._trainDots(line, geo, now);
       root.querySelector("g.trains").innerHTML = dots.join("");
       const counter = root.querySelector(".count");
-      if (counter) counter.textContent = `${count} rame${count > 1 ? "s" : ""}`;
+      if (counter) counter.textContent = `${dots.length} ${plural(dots.length, "rame")}`;
     }
   }
+
+  // Une pastille par rame de la ligne en circulation à l'instant now
+  _trainDots(line, geo, now) {
+    const dots = [];
+    for (const train of this._trains) {
+      const pos = train.line === line.code ? trainPosition(train.stops, now) : null;
+      if (pos === null) continue;
+      const cx = PAD_SIDE + pos * geo.step;
+      const cy = trainY(train, pos, geo);
+      dots.push(
+        `<circle cx="${cx.toFixed(1)}" cy="${cy}" r="4" class="train" style="stroke:${esc(line.color)}"><title>vers ${esc(train.headsign)}</title></circle>`
+      );
+    }
+    return dots;
+  }
+}
+
+// Ordonnée d'une rame : sa voie, ou la voie commune près d'un terminus à quai unique
+function trainY(train, pos, geo) {
+  const cy = train.forward ? geo.yTop : geo.yBottom;
+  if (geo.singleStart && pos < 1) return geo.yMid + pos * (cy - geo.yMid);
+  if (geo.singleEnd && pos > geo.n - 2) return geo.yMid + (geo.n - 1 - pos) * (cy - geo.yMid);
+  return cy;
 }
 
 StarMetroCard.styles = `

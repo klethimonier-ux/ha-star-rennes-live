@@ -255,7 +255,7 @@ class RealLineBTests(unittest.TestCase):
         from custom_components.star_rennes_live.api.gtfs_metro import MetroSchedule, MetroLine
         from custom_components.star_rennes_live.api.metro_realtime import parse_passages, build_realtime_trains
 
-        recs = json.load(open(HERE / "fixture_ligne_b.json", encoding="utf-8"))["results"]
+        recs = json.loads((HERE / "fixture_ligne_b.json").read_text(encoding="utf-8"))["results"]
         st = ["Cesson - Viasilva", "Atalante", "Beaulieu - Université", "Joliot-Curie - Chateaubriand",
               "Les Gayeulles", "Gros-Chêne", "Jules Ferry", "Sainte-Anne", "Saint-Germain", "Gares",
               "Colombier", "Mabilais", "Cleunay", "La Courrouze", "Saint-Jacques - Gaîté"]
@@ -279,7 +279,7 @@ class RealLineBTests(unittest.TestCase):
         from zoneinfo import ZoneInfo
         from custom_components.star_rennes_live.api.metro_realtime import parse_passages, passages_by_station
 
-        recs = json.load(open(HERE / "fixture_ligne_b.json", encoding="utf-8"))["results"]
+        recs = json.loads((HERE / "fixture_ligne_b.json").read_text(encoding="utf-8"))["results"]
         now = datetime(2026, 10, 15, 23, 17, 48, tzinfo=ZoneInfo("Europe/Paris"))
         by = passages_by_station(parse_passages(recs), now)
         sta = {p["direction"]: p for p in by["sainte anne"]} if "sainte anne" in by else {p["direction"]: p for p in next(v for k, v in by.items() if "anne" in k)}
@@ -365,7 +365,7 @@ class RealLineATests(unittest.TestCase):
         from custom_components.star_rennes_live.api.metro_realtime import parse_passages
 
         self.now = datetime(2026, 10, 17, 15, 19, 54, tzinfo=ZoneInfo("Europe/Paris"))
-        recs = json.load(open(HERE / "fixture_ligne_a.json", encoding="utf-8"))["results"]
+        recs = json.loads((HERE / "fixture_ligne_a.json").read_text(encoding="utf-8"))["results"]
         self.passages = parse_passages(recs, now=self.now)
         self.schedule = MetroSchedule("Europe/Paris", {"A": MetroLine("A", "a", None, self.STATIONS)}, [])
         for i in range(14):
@@ -377,7 +377,7 @@ class RealLineATests(unittest.TestCase):
 
         self.assertFalse(any(p.station == "République" for p in self.passages))
         self.assertNotIn("republique", passages_by_station(self.passages, self.now))
-        recs = json.load(open(HERE / "fixture_ligne_a.json", encoding="utf-8"))["results"]
+        recs = json.loads((HERE / "fixture_ligne_a.json").read_text(encoding="utf-8"))["results"]
         self.assertTrue(is_fresh(recs, self.now))  # une fiche figée ne disqualifie pas tout le jeu
 
     def test_no_phantom_trains(self):

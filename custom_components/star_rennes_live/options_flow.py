@@ -103,7 +103,21 @@ class StarRennesOptionsFlow(config_entries.OptionsFlow):
     # PAGE 2 : CONFIGURATION DÉTAILLÉE
     # -------------------------------------------------------------------------
     async def async_step_configure(self, user_input=None):
-        client = self._client()
+        if user_input is None:
+            schema = await self._async_configure_schema(self._client())
+            return self.async_show_form(step_id="configure", data_schema=vol.Schema(schema))
+
+        new_data = self._configured_data(user_input)
+
+        # Ajout d'un bus : on garde les modifications ci-dessus en attente
+        if self.selected_types["bus"] and user_input.get("add_bus"):
+            self._pending = new_data
+            return await self.async_step_bus_line()
+
+        return self.async_create_entry(title="", data=new_data)
+
+    async def _async_configure_schema(self, client) -> dict:
+        """Champs de la page de configuration, pour les services cochés."""
         schema = {}
 
         # BUS
@@ -139,56 +153,27 @@ class StarRennesOptionsFlow(config_entries.OptionsFlow):
             parking_list = {pid: p["name"] for pid, p in raw.items()}
             schema[vol.Optional("parking_ids", default=self.data.get("parking_ids", []))] = cv.multi_select(parking_list)
 
-        if user_input is None:
-            return self.async_show_form(step_id="configure", data_schema=vol.Schema(schema))
+        return schema
 
-        # -------------------------
-        # TRAITEMENT
-        # -------------------------
+    def _configured_data(self, user_input: dict) -> dict:
+        """Nouvelle configuration : services décochés vidés, sélections reprises du formulaire."""
         new_data = dict(self.data)
+        selected = self.selected_types
 
         # Drapeaux de service tenus à jour (lus par sensor.py)
         for key in SERVICE_TYPES:
-            new_data[key] = self.selected_types[key]
+            new_data[key] = selected[key]
 
-        # BUS
-        if self.selected_types["bus"]:
-            keep_indices = {int(i) for i in user_input.get("bus_existing", [])}
-            new_data["bus_entries"] = [
-                b for idx, b in enumerate(self.data.get("bus_entries", []))
-                if idx in keep_indices
-            ]
-        else:
-            new_data["bus_entries"] = []
-
-        # METRO
-        if self.selected_types["metro"]:
-            new_data["metro_lines"] = user_input.get("metro_lines", [])
-            new_data["metro_stations"] = user_input.get("metro_stations", [])
-            new_data["metro_rames"] = bool(user_input.get("metro_rames", False))
-        else:
-            new_data["metro_lines"] = []
-            new_data["metro_stations"] = []
-            new_data["metro_rames"] = False
-
-        # VELO
-        if self.selected_types["bike"]:
-            new_data["bike_stations"] = user_input.get("bike_stations", [])
-        else:
-            new_data["bike_stations"] = []
-
-        # PARKING
-        if self.selected_types["parking"]:
-            new_data["parking_ids"] = user_input.get("parking_ids", [])
-        else:
-            new_data["parking_ids"] = []
-
-        # Ajout d'un bus : on garde les modifications ci-dessus en attente
-        if self.selected_types["bus"] and user_input.get("add_bus"):
-            self._pending = new_data
-            return await self.async_step_bus_line()
-
-        return self.async_create_entry(title="", data=new_data)
+        keep_indices = {int(i) for i in user_input.get("bus_existing", [])} if selected["bus"] else set()
+        new_data["bus_entries"] = [
+            b for idx, b in enumerate(self.data.get("bus_entries", [])) if idx in keep_indices
+        ]
+        new_data["metro_lines"] = user_input.get("metro_lines", []) if selected["metro"] else []
+        new_data["metro_stations"] = user_input.get("metro_stations", []) if selected["metro"] else []
+        new_data["metro_rames"] = bool(user_input.get("metro_rames", False)) if selected["metro"] else False
+        new_data["bike_stations"] = user_input.get("bike_stations", []) if selected["bike"] else []
+        new_data["parking_ids"] = user_input.get("parking_ids", []) if selected["parking"] else []
+        return new_data
 
     # -------------------------------------------------------------------------
     # AJOUT D’UN BUS — ÉTAPE 1 : CHOIX DE LA LIGNE

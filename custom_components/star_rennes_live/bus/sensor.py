@@ -11,6 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import (
     DOMAIN,
+    MANUFACTURER,
     LINE_KEY,
     LINE_NAME_KEY,
     STOP_NAME_KEY,
@@ -54,7 +55,7 @@ class StarBusSensor(CoordinatorEntity, SensorEntity):
         return {
             "identifiers": {(DOMAIN, f"bus_line_{self._coordinator.line_id}")},
             "name": f"Ligne {self._coordinator.line_name}",
-            "manufacturer": "STAR Rennes",
+            "manufacturer": MANUFACTURER,
             "model": "Bus",
         }
 

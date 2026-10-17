@@ -1,5 +1,8 @@
 DOMAIN = "star_rennes_live"
 
+# Fabricant affiché sur les appareils
+MANUFACTURER = "STAR Rennes"
+
 CONF_STATIONS = "stations"
 CONF_LINE = "line"
 CONF_DIRECTION = "direction"

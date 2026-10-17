@@ -98,37 +98,46 @@ async def async_get_alerts(client: StarClient, line_names: list[str]) -> list[di
     return await client.async_get_all(DATASET, where=where)
 
 
+def _is_active(rec: dict[str, Any], now: datetime) -> bool:
+    """La fiche est-elle dans sa période de validité ?"""
+    start = _parse_dt(rec.get("debutvalidite"))
+    end = _parse_dt(rec.get("finvalidite"))
+    return not (start and now < start) and not (end and now > end)
+
+
+def _new_group(rec: dict[str, Any], levels: list[str]) -> dict[str, Any]:
+    """Entrée regroupée d'une perturbation (sans ses lignes)."""
+    return {
+        "id": str(rec.get("idperturbation") or ""),
+        "titre": rec.get("titre") or "Perturbation",
+        "description": _clean(rec.get("description")),
+        "niveau": ", ".join(levels),
+        "bloquante": any(level.lower() in BLOCKING_LEVELS for level in levels),
+        "type": "suspension" if is_suspension(rec.get("titre"), rec.get("description")) else "info",
+        "directions": mentioned_directions(rec.get("description")),
+        "lignes": [],
+        "debut": rec.get("debutvalidite"),
+        "fin": rec.get("finvalidite"),
+        "url": rec.get("url"),
+    }
+
+
 def active_alerts(records: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
     """Alertes en cours de validité, regroupées (une entrée par perturbation).
 
-    Retourne [{"id", "titre", "description", "niveau", "bloquante", "lignes",
-    "debut", "fin", "url"}], les bloquantes d'abord.
+    Retourne [{"id", "titre", "description", "niveau", "bloquante", "type",
+    "directions", "lignes", "debut", "fin", "url"}], suspensions puis
+    bloquantes d'abord.
     """
     groups: dict[tuple, dict[str, Any]] = {}
     for rec in records:
-        start = _parse_dt(rec.get("debutvalidite"))
-        end = _parse_dt(rec.get("finvalidite"))
-        if start and now < start:
-            continue
-        if end and now > end:
+        if not _is_active(rec, now):
             continue
         levels = _levels(rec.get("niveau"))
         key = (rec.get("titre"), rec.get("description"), tuple(levels), rec.get("debutvalidite"), rec.get("finvalidite"))
         group = groups.get(key)
         if group is None:
-            group = groups[key] = {
-                "id": str(rec.get("idperturbation") or ""),
-                "titre": rec.get("titre") or "Perturbation",
-                "description": _clean(rec.get("description")),
-                "niveau": ", ".join(levels),
-                "bloquante": any(level.lower() in BLOCKING_LEVELS for level in levels),
-                "type": "suspension" if is_suspension(rec.get("titre"), rec.get("description")) else "info",
-                "directions": mentioned_directions(rec.get("description")),
-                "lignes": [],
-                "debut": rec.get("debutvalidite"),
-                "fin": rec.get("finvalidite"),
-                "url": rec.get("url"),
-            }
+            group = groups[key] = _new_group(rec, levels)
         line = rec.get("nomcourtligne")
         if line and line not in group["lignes"]:
             group["lignes"].append(line)

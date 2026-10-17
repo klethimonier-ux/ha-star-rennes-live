@@ -83,19 +83,8 @@ def parse_passages(
             continue
         if now is not None and not _record_is_fresh(rec, now, tz):
             continue
-        times = []
-        for rank in ("first", "second"):
-            tid = rec.get(f"id{rank}train")
-            fill = _fill_value(rec.get(f"couleurremplissage{rank}trainarrivee"))
-            arr = _parse_local(rec.get(f"arrivee{rank}train"), tz)
-            dep = _parse_local(rec.get(f"depart{rank}train"), tz)
-            if arr is None and dep is None:
-                continue
-            arr = arr if arr is not None else dep
-            dep = dep if dep is not None else arr
-            times.append((arr, max(arr, dep), str(tid) if tid not in (None, "") else None, fill))
+        times = _record_times(rec, tz)
         if times:
-            times.sort()
             passages.append(
                 Passage(
                     line,
@@ -107,6 +96,23 @@ def parse_passages(
                 )
             )
     return passages
+
+
+def _record_times(rec: dict, tz: ZoneInfo) -> list[tuple[float, float, str | None, str | None]]:
+    """(arrivée, départ, n° de course, remplissage) des deux rames d'une fiche, dans l'ordre."""
+    times = []
+    for rank in ("first", "second"):
+        arr = _parse_local(rec.get(f"arrivee{rank}train"), tz)
+        dep = _parse_local(rec.get(f"depart{rank}train"), tz)
+        if arr is None and dep is None:
+            continue
+        arr = arr if arr is not None else dep
+        dep = dep if dep is not None else arr
+        tid = rec.get(f"id{rank}train")
+        fill = _fill_value(rec.get(f"couleurremplissage{rank}trainarrivee"))
+        times.append((arr, max(arr, dep), str(tid) if tid not in (None, "") else None, fill))
+    times.sort()
+    return times
 
 
 def _record_is_fresh(rec: dict, now: datetime, tz: ZoneInfo) -> bool:
@@ -172,97 +178,103 @@ def build_realtime_trains(
     """
     t_now = now.timestamp()
     result: dict[str, list[dict]] = {}
-
     for code, line in schedule.lines.items():
-        index = {_normalize_name(name): i for i, name in enumerate(line.stations)}
-        last = len(line.stations) - 1
-        forward_label = direction_label(line.stations[last])
-
-        # (sens, index de station) -> passages
-        by_station: dict[tuple[int, int], list[tuple[float, float, str | None]]] = {}
-        for p in passages:
-            if p.line != code:
-                continue
-            idx = index.get(_normalize_name(p.station))
-            if idx is None:
-                continue
-            direction = 1 if direction_label(p.destination) == forward_label else -1
-            ids = p.ids or [None] * len(p.times)
-            by_station[(direction, idx)] = [(a, d, ids[k] if k < len(ids) else None) for k, (a, d) in enumerate(p.times)]
+        by_station = _passages_by_direction(passages, code, line.stations)
         if not by_station:
             continue
-
-        trains: list[dict] = []
-        for direction in (1, -1):
-            order = range(0, last + 1) if direction == 1 else range(last, -1, -1)
-            seg_of = _calibrated_segments(by_station, schedule, code, direction, list(order))
-            terminus = line.stations[last] if direction == 1 else line.stations[0]
-            active: list[list[tuple[int, float, float]]] = []  # rames suivies, de l'avant vers l'arrière
-            train_ids: dict[int, str] = {}  # id(stops) -> n° de course STAR
-            prev_idx: int | None = None
-
-            for idx in order:
-                times = by_station.get((direction, idx))
-                if times is None:
-                    continue  # pas de fiche (ex. terminus d'arrivée)
-                segment = seg_of(prev_idx, idx) if prev_idx is not None else DEFAULT_SEGMENT
-                min_run = max(MIN_RUN, segment * MIN_RUN_RATIO)
-                new_trains, following = [], list(times)
-                # Arrivées trop tôt pour une rame déjà suivie : rames nouvelles
-                # (situées entre la station précédente et celle-ci)
-                while (
-                    following
-                    and not _matches(active, following, min_run, train_ids)
-                    and not _too_close_to_front(active, following[0], segment)
-                ):
-                    arr, dep, tid = following.pop(0)
-                    stops = [(idx, arr, dep)]
-                    if tid:
-                        train_ids[id(stops)] = tid
-                    if prev_idx is not None:
-                        # Rame déjà dans le tronçon : départ estimé de la station
-                        # précédente, jamais dans le futur (rame retenue = visible)
-                        start = min(arr - segment, t_now)
-                        stops.insert(0, (prev_idx, start, start))
-                    new_trains.append(stops)
-                assigned = []
-                for stops, (arr, dep, tid) in zip(active, following):
-                    stops.append((idx, arr, dep))
-                    if tid:
-                        train_ids.setdefault(id(stops), tid)
-                    assigned.append(stops)
-                for stops in active[len(assigned):]:
-                    # Plus de créneau à cette station (2 passages publiés seulement,
-                    # ex. deux rames dans le tronçon) : arrivée estimée, fin de suivi
-                    arrive = stops[-1][2] + segment
-                    stops.append((idx, arrive, arrive + ESTIMATED_DWELL))
-                    trains.append(_finish(stops, terminus))
-                active = new_trains + assigned
-                prev_idx = idx
-
-            # Arrivée au terminus (pas de fiche pour un quai d'arrivée)
-            end_idx = last if direction == 1 else 0
-            for stops in active:
-                if stops[-1][0] != end_idx and prev_idx is not None:
-                    segment = seg_of(prev_idx, end_idx)
-                    arrive = stops[-1][2] + segment
-                    stops.append((end_idx, arrive, arrive + TERMINUS_DWELL))
-                    train = _finish(stops, terminus)
-                    train["_arrival"] = end_idx  # arrivée au terminus estimée
-                    trains.append(train)
-                else:
-                    trains.append(_finish(stops, terminus))
-
-            for train in trains:
-                train.setdefault("d", direction)
-
+        tracker = _DirectionTracker(by_station, schedule, code, line.stations, t_now)
+        trains = tracker.run(1) + tracker.run(-1)
         _link_terminus_turnbacks(trains, line.stations, t_now)
-
         # Rames visibles maintenant ou dans les prochaines minutes uniquement
         result[code] = [
             t for t in trains if t["s"] and t["s"][-1][2] >= t_now - 30 and t["s"][0][1] <= t_now + 900
         ]
     return result
+
+
+def _passages_by_direction(
+    passages: list[Passage], code: str, stations: list[str]
+) -> dict[tuple[int, int], list[tuple[float, float]]]:
+    """(sens, index de station) -> horaires publiés (arrivée, départ) d'une ligne."""
+    index = {_normalize_name(name): i for i, name in enumerate(stations)}
+    forward_label = direction_label(stations[-1])
+    by_station: dict[tuple[int, int], list[tuple[float, float]]] = {}
+    for p in passages:
+        idx = index.get(_normalize_name(p.station)) if p.line == code else None
+        if idx is None:
+            continue
+        direction = 1 if direction_label(p.destination) == forward_label else -1
+        by_station[(direction, idx)] = list(p.times)
+    return by_station
+
+
+class _DirectionTracker:
+    """Suivi des rames d'une ligne, station après station, dans un sens."""
+
+    def __init__(self, by_station, schedule: MetroSchedule, code: str, stations: list[str], t_now: float) -> None:
+        self.by_station = by_station
+        self.schedule = schedule
+        self.code = code
+        self.stations = stations
+        self.last = len(stations) - 1
+        self.t_now = t_now
+
+    def run(self, direction: int) -> list[dict]:
+        order = list(range(0, self.last + 1)) if direction == 1 else list(range(self.last, -1, -1))
+        seg_of = _calibrated_segments(self.by_station, self.schedule, self.code, direction, order)
+        terminus = self.stations[self.last] if direction == 1 else self.stations[0]
+        trains: list[dict] = []
+        active: list[list[tuple[int, float, float]]] = []  # rames suivies, de l'avant vers l'arrière
+        prev_idx: int | None = None
+        for idx in order:
+            times = self.by_station.get((direction, idx))
+            if times is None:
+                continue  # pas de fiche (ex. terminus d'arrivée)
+            segment = seg_of(prev_idx, idx) if prev_idx is not None else DEFAULT_SEGMENT
+            new_trains, following = self._new_trains(active, list(times), idx, prev_idx, segment)
+            assigned = [stops + [(idx, arr, dep)] for stops, (arr, dep) in zip(active, following)]
+            for stops in active[len(assigned):]:
+                # Plus de créneau à cette station (2 passages publiés seulement,
+                # ex. deux rames dans le tronçon) : arrivée estimée, fin de suivi
+                arrive = stops[-1][2] + segment
+                trains.append(_finish(stops + [(idx, arrive, arrive + ESTIMATED_DWELL)], terminus))
+            active = new_trains + assigned
+            prev_idx = idx
+        end_idx = self.last if direction == 1 else 0
+        trains += [self._end_of_line(stops, end_idx, prev_idx, seg_of, terminus) for stops in active]
+        for train in trains:
+            train["d"] = direction
+        return trains
+
+    def _new_trains(self, active, following, idx, prev_idx, segment):
+        """Arrivées trop tôt pour une rame déjà suivie : rames nouvelles
+        (situées entre la station précédente et celle-ci)."""
+        min_run = max(MIN_RUN, segment * MIN_RUN_RATIO)
+        new_trains = []
+        while (
+            following
+            and not _matches(active, following, min_run)
+            and not _too_close_to_front(active, following[0], segment)
+        ):
+            arr, dep = following.pop(0)
+            stops = [(idx, arr, dep)]
+            if prev_idx is not None:
+                # Rame déjà dans le tronçon : départ estimé de la station
+                # précédente, jamais dans le futur (rame retenue = visible)
+                start = min(arr - segment, self.t_now)
+                stops.insert(0, (prev_idx, start, start))
+            new_trains.append(stops)
+        return new_trains, following
+
+    @staticmethod
+    def _end_of_line(stops, end_idx, prev_idx, seg_of, terminus) -> dict:
+        """Arrivée au terminus (pas de fiche pour un quai d'arrivée)."""
+        if stops[-1][0] == end_idx or prev_idx is None:
+            return _finish(stops, terminus)
+        arrive = stops[-1][2] + seg_of(prev_idx, end_idx)
+        train = _finish(stops + [(end_idx, arrive, arrive + TERMINUS_DWELL)], terminus)
+        train["_arrival"] = end_idx  # arrivée au terminus estimée
+        return train
 
 
 def _calibrated_segments(by_station, schedule, code, direction, order):
@@ -311,33 +323,41 @@ def _link_terminus_turnbacks(trains: list[dict], stations: list[str] | None = No
         end_idx = train.pop("_arrival", None)
         if end_idx is None:
             continue
-        estimated = train["s"][-1][1]
-        best = None
-        for k, other in enumerate(departing):
-            first = other["s"][0]
-            if k in used or other["d"] == train["d"] or first[0] != end_idx:
-                continue
-            gap = abs(first[1] - estimated)
-            if gap <= TURNBACK_MATCH and (best is None or gap < best[0]):
-                best = (gap, k)
-        if best is not None:
-            used.add(best[1])
-            arrival = departing[best[1]]["s"][0][1]
+        k = _turnback_partner(train, end_idx, departing, used)
+        if k is not None:
+            used.add(k)
+            arrival = departing[k]["s"][0][1]
             train["s"][-1] = [end_idx, arrival, arrival]
+    if stations and t_now is not None:
+        _add_terminus_approaches(trains, departing, used, stations, t_now)
 
-    # Rame qui approche du terminus sans être suivie (elle a dépassé la dernière
-    # station publiée) : le quai de départ donne son heure d'arrivée, on la
-    # dessine sur la voie d'arrivée pendant son dernier tronçon.
-    if not stations or t_now is None:
-        return
+
+def _turnback_partner(train: dict, end_idx: int, departing: list[dict], used: set[int]) -> int | None:
+    """Rame au départ du terminus la plus proche de l'arrivée estimée (indice dans departing)."""
+    estimated = train["s"][-1][1]
+    best = None
+    for k, other in enumerate(departing):
+        first = other["s"][0]
+        if k in used or other["d"] == train["d"] or first[0] != end_idx:
+            continue
+        gap = abs(first[1] - estimated)
+        if gap <= TURNBACK_MATCH and (best is None or gap < best[0]):
+            best = (gap, k)
+    return best[1] if best is not None else None
+
+
+def _add_terminus_approaches(
+    trains: list[dict], departing: list[dict], used: set[int], stations: list[str], t_now: float
+) -> None:
+    """Rame qui approche du terminus sans être suivie (elle a dépassé la dernière
+    station publiée) : le quai de départ donne son heure d'arrivée, on la
+    dessine sur la voie d'arrivée pendant son dernier tronçon."""
     last = len(stations) - 1
     for k, other in enumerate(departing):
         first = other["s"][0]
         start_idx = 0 if other["d"] == 1 else last
-        if k in used or first[0] != start_idx:
-            continue
         arrival = first[1]
-        if not (t_now < arrival <= t_now + TERMINUS_APPROACH):
+        if k in used or first[0] != start_idx or not t_now < arrival <= t_now + TERMINUS_APPROACH:
             continue
         neighbour = 1 if start_idx == 0 else last - 1
         leave = min(arrival - DEFAULT_SEGMENT, t_now)
@@ -358,7 +378,7 @@ def _too_close_to_front(active: list, arrival: tuple, segment: float) -> bool:
     return run >= MIN_RUN and arrival[0] > expected - MIN_HEADWAY
 
 
-def _matches(active: list, following: list, min_run: float, train_ids: dict | None = None) -> bool:
+def _matches(active: list, following: list, min_run: float) -> bool:
     """Les arrivées publiées correspondent-elles aux rames suivies, dans l'ordre ?
 
     Chaque rame suivie doit mettre au moins min_run entre son départ de la
@@ -370,7 +390,7 @@ def _matches(active: list, following: list, min_run: float, train_ids: dict | No
         return False
     # Le n° publié (idfirsttrain) ne suit pas une rame d'une station à l'autre
     # (vérifié sur la ligne a le 17/10/2026) : seuls les horaires font foi.
-    for stops, (arr, *_rest) in list(zip(active, following))[:2]:
+    for stops, (arr, _dep) in list(zip(active, following))[:2]:
         if arr - stops[-1][2] < min_run:
             return False
     return True

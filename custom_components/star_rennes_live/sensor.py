@@ -18,13 +18,13 @@ async def async_setup_entry(
     config = get_entry_config(entry)
 
     if config.get("metro_lines") or config.get("metro_stations"):
-        entities.extend(await create_metro_entities(hass, entry, config))
+        entities.extend(create_metro_entities(hass, entry, config))
 
     if config.get("bike"):
-        entities.extend(await create_bike_entities(hass, entry, config))
+        entities.extend(create_bike_entities(hass, entry, config))
 
     if config.get("parking_ids"):
-        entities.extend(await create_parking_entities(hass, entry, config))
+        entities.extend(create_parking_entities(hass, entry, config))
 
     entities.extend(create_bus_entities(hass, entry))
 

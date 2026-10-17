@@ -137,7 +137,6 @@ class StarRennesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_bus_destination(self, user_input=None):
         if user_input is None:
             line_code = self._bus_user_inputs["bus_line"]
-            stop_name = self._bus_user_inputs["bus_stop"]
 
             dest_list = await self._bus_get_destination_list(line_code)
 

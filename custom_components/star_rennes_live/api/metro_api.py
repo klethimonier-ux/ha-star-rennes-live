@@ -25,7 +25,7 @@ def _combine_states(states_by_line: dict[str, Any]) -> Any:
 
     Même état sur toutes les lignes -> cet état ; sinon « A : x, B : y ».
     """
-    distinct = {state for state in states_by_line.values()}
+    distinct = set(states_by_line.values())
     if len(distinct) <= 1:
         return next(iter(distinct), None)
     return ", ".join(f"{code} : {state}" for code, state in sorted(states_by_line.items()))
@@ -259,36 +259,46 @@ def summarize_directions(
     station_line_code: str | None, equipments: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Résumé par direction : pour chaque catégorie, total / HS / noms HS."""
+    summary = _empty_summary(_station_line_codes(station_line_code, equipments))
+    for equipment in equipments:
+        category = EQUIPMENT_CATEGORIES.get(equipment.get("type_short"))
+        if category is None:
+            continue
+        is_hs = equipment_status(equipment.get("state")) == "hs"
+        for _, label in equipment_directions(equipment):
+            if label in summary:
+                _count_equipment(summary[label][category], equipment, is_hs)
+    return list(summary.values())
+
+
+def _station_line_codes(station_line_code: str | None, equipments: list[dict[str, Any]]) -> list[str]:
+    """Lignes de la station : celles de la topologie, puis celles de ses équipements."""
     codes = [c for c in (station_line_code or "").split("/") if c in LINE_DIRECTIONS]
     for equipment in equipments:
         code = equipment.get("line_code")
         if code in LINE_DIRECTIONS and code not in codes:
             codes.append(code)
+    return codes
 
-    summary: dict[str, dict[str, Any]] = {}
-    for code in sorted(codes):
-        for _, label in LINE_DIRECTIONS[code]:
-            summary[label] = {
-                "direction": label,
-                "ligne": code,
-                **{cat: {"total": 0, "hs": 0, "hs_noms": []} for cat in EQUIPMENT_CATEGORIES.values()},
-            }
 
-    for equipment in equipments:
-        category = EQUIPMENT_CATEGORIES.get(equipment.get("type_short"))
-        if category is None:
-            continue
-        status = equipment_status(equipment.get("state"))
-        for _, label in equipment_directions(equipment):
-            if label not in summary:
-                continue
-            bucket = summary[label][category]
-            bucket["total"] += 1
-            if status == "hs":
-                bucket["hs"] += 1
-                bucket["hs_noms"].append(equipment.get("name"))
+def _empty_summary(codes: list[str]) -> dict[str, dict[str, Any]]:
+    """Une entrée par direction des lignes données, compteurs à zéro."""
+    return {
+        label: {
+            "direction": label,
+            "ligne": code,
+            **{cat: {"total": 0, "hs": 0, "hs_noms": []} for cat in EQUIPMENT_CATEGORIES.values()},
+        }
+        for code in sorted(codes)
+        for _, label in LINE_DIRECTIONS[code]
+    }
 
-    return list(summary.values())
+
+def _count_equipment(bucket: dict[str, Any], equipment: dict[str, Any], is_hs: bool) -> None:
+    bucket["total"] += 1
+    if is_hs:
+        bucket["hs"] += 1
+        bucket["hs_noms"].append(equipment.get("name"))
 
 
 # ---------------------------------------------------------------------------
