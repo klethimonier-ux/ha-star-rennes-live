@@ -585,6 +585,50 @@ class ConfigFlowTests(unittest.TestCase):
         self.assertTrue(all(c[2] == {"Authorization": "Apikey GOOD"} for c in session.calls[1:]))
 
 
+class FollowedLinesTests(unittest.TestCase):
+    """Perturbations limitées aux lignes suivies (cochées ou desservant une station suivie)."""
+
+    def test_followed_lines(self):
+        from custom_components.star_rennes_live.api.metro_api import followed_lines
+
+        topo = {"G": {"line_code": "A/B"}, "I": {"line_code": "A"}}
+        self.assertEqual(followed_lines(["a"], topo, []), {"A"})
+        self.assertEqual(followed_lines([], topo, ["G"]), {"A", "B"})
+        self.assertEqual(followed_lines(None, topo, ["I", "inconnue"]), {"A"})
+
+    def test_filter_by_line(self):
+        from custom_components.star_rennes_live.api.metro_api import perturbations_on_lines
+
+        items = [
+            {"type": "ligne", "ligne": "B", "lignes": ["B"], "titre": "Ligne b · en panne"},
+            {"type": "station", "station": "République", "lignes": ["A"], "titre": "Station République fermée"},
+            {"type": "station", "station": "Gares", "lignes": ["B"], "titre": "Station Gares fermée"},
+        ]
+        self.assertEqual([i["titre"] for i in perturbations_on_lines(items, {"A"})], ["Station République fermée"])
+        self.assertEqual(len(perturbations_on_lines(items, {"A", "B"})), 3)
+        self.assertEqual(perturbations_on_lines(items, set()), [])
+
+    def test_sensor_shows_only_followed_lines(self):
+        import homeassistant.util.dt as dt_util
+
+        hass, entry, session, added = setup_entry({"metro": True, "metro_lines": ["A"], "metro_stations": []})
+        pert = next(e for e in added if e._attr_name == "STAR Perturbations")
+        coord = hass.data[DOMAIN][entry.entry_id]["metro"]
+        titles = lambda: [p["titre"] for p in pert.extra_state_attributes["perturbations"]]
+        try:
+            dt_util._now[0] = datetime(2026, 10, 14, 10, 0, tzinfo=timezone.utc)  # mercredi 12 h
+            session.db["tco-metro-lignes-etat-tr"][1]["etat"] = "En panne"  # ligne b, non suivie
+            run(coord.async_refresh())
+            self.assertEqual(titles(), [])
+            # Station non suivie mais sur la ligne a : signalée
+            session.db["tco-metro-stations-etat-tr"][5]["etat"] = "Fermée"
+            session.db["tco-metro-lignes-etat-tr"][0]["etat"] = "En panne"
+            run(coord.async_refresh())
+            self.assertEqual(titles(), ["Ligne a · en panne", "Station Station 5 fermée"])
+        finally:
+            dt_util._now[0] = None
+
+
 class DeducedClosureTests(unittest.TestCase):
     """Station fermée non publiée par STAR : tous les ascenseurs et escaliers HS."""
 

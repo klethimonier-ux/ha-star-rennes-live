@@ -4,7 +4,7 @@
  *
  *   type: custom:star-trajets-card
  *   title: Mes trajets                         # facultatif
- *   perturbations: sensor.star_perturbations   # facultatif
+ *   perturbations: false                       # facultatif : masque les alertes métro
  *   show_distributeurs: false                  # facultatif
  *   entities:
  *     - sensor.becquerel_za_saint_sulpice      # bus
@@ -14,7 +14,7 @@
  */
 
 (() => {
-const CARD_VERSION = "1.10.1";
+const CARD_VERSION = "1.11.0";
 
 // Affluence publiée par STAR pour chaque rame (couleur de remplissage)
 const CROWD_LEVELS = {
@@ -51,6 +51,8 @@ const CATEGORY_LABELS = {
   escaliers: ["Escalator", "Escalators"],
   distributeurs: ["Distributeur", "Distributeurs"],
 };
+
+const LINE_STOPPED_HTML = '<div class="dir-wait small muted">ligne à l\'arrêt</div>';
 
 // « 3 rames », « 1 vélo » : pluriel sans gabarit imbriqué
 const plural = (n, word) => (n > 1 ? word + "s" : word);
@@ -98,7 +100,6 @@ class StarTrajetsCard extends HTMLElement {
     const ids = Object.keys(hass?.states || {});
     const pick = (test) => ids.filter((id) => test(hass.states[id].attributes || {}));
     return {
-      perturbations: pick((a) => Array.isArray(a.perturbations))[0],
       entities: [
         ...pick((a) => Array.isArray(a.departs)).slice(0, 2),
         ...pick((a) => Array.isArray(a.directions)).slice(0, 1),
@@ -112,9 +113,32 @@ class StarTrajetsCard extends HTMLElement {
   }
 
   _perturbations() {
-    const st = this._state(this._config.perturbations);
-    const metro = Array.isArray(st?.attributes?.perturbations) ? st.attributes.perturbations : [];
-    return [...this._busSuspensions(), ...metro];
+    return [...this._busSuspensions(), ...this._metroPerturbations()];
+  }
+
+  // Capteurs de perturbations du métro : trouvés seuls (lignes suivies dans
+  // l'intégration), ou celui indiqué ; « perturbations: false » les masque
+  _perturbationSensors() {
+    const setting = this._config.perturbations;
+    if (setting === false) return [];
+    if (typeof setting === "string") return [setting];
+    const states = this._hass?.states || {};
+    return Object.keys(states).filter((id) => id.startsWith("sensor.") && Array.isArray(states[id].attributes?.perturbations));
+  }
+
+  // Pannes de ligne et stations fermées, sans doublon (plusieurs intégrations configurées)
+  _metroPerturbations() {
+    const seen = new Set();
+    const items = [];
+    for (const id of this._perturbationSensors()) {
+      for (const p of this._state(id)?.attributes?.perturbations || []) {
+        const key = p.type + "|" + p.titre;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(p);
+      }
+    }
+    return items;
   }
 
   // Lignes de bus suspendues (alertes des bus affichés), regroupées par alerte
@@ -186,13 +210,15 @@ class StarTrajetsCard extends HTMLElement {
     if (!this.shadowRoot || !this._config || !this._hass) return;
 
     // Évite de reconstruire le DOM si rien n'a changé
-    const ids = [this._config.perturbations, ...this._config.entities.map((e) => e.entity)];
+    const ids = [...this._perturbationSensors(), ...this._config.entities.map((e) => e.entity)];
     const signature = ids.map((id) => this._state(id)?.last_updated || "-").join("|")
       + `|${Math.floor(Date.now() / 20000)}`;
     if (signature === this._signature) return;
     this._signature = signature;
 
     const perturbations = this._perturbations();
+    // Lignes de métro en panne : plus de prochains passages dans les blocs station
+    this._stoppedLines = new Set(perturbations.filter((p) => p.type === "ligne" && p.ligne).map((p) => p.ligne));
     const rows = this._config.entities.map((conf) => this._renderEntity(conf)).join("");
     const realtime = this._config.entities.some((conf) => this._state(conf.entity)?.attributes?.temps_reel === true);
 
@@ -439,6 +465,12 @@ class StarTrajetsCard extends HTMLElement {
         </div>`;
     };
 
+    // Ligne en panne : « ligne à l'arrêt » au lieu d'horaires de rames qui ne passeront pas
+    const waitFor = (d) => {
+      const p = byDirection[d.direction];
+      return this._stoppedLines?.has(p?.ligne || d.ligne) ? LINE_STOPPED_HTML : waitHtml(p);
+    };
+
     const columns = directions.map((d) => {
       const items = categories
         .filter((cat) => d[cat] && d[cat].total > 0)
@@ -455,7 +487,7 @@ class StarTrajetsCard extends HTMLElement {
       return `
         <div class="direction ${hasIssue ? "issue" : ""}">
           <div class="small soft dir-title">Vers ${esc(d.direction)}</div>
-          ${waitHtml(byDirection[d.direction])}
+          ${waitFor(d)}
           ${items.join("") || ((a.directions || []).length ? `<div class="small muted">Aucun équipement</div>` : "")}
         </div>`;
     });

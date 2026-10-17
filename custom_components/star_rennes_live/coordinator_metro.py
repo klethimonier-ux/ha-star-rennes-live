@@ -16,6 +16,8 @@ from .api.metro_api import (
     StarMetroAPI,
     build_metro_structure,
     drop_off_service_closures,
+    followed_lines,
+    perturbations_on_lines,
     within_service_hours,
 )
 from .const import DOMAIN
@@ -42,9 +44,11 @@ class MetroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         entry: ConfigEntry,
         client: StarClient,
         station_ids: list[str] | None = None,
+        line_codes: list[str] | None = None,
     ) -> None:
         self.api = StarMetroAPI(client)
         self._station_ids = [str(sid) for sid in station_ids or []]
+        self._line_codes = [str(code) for code in line_codes or []]
         self._fetch_stations = bool(self._station_ids)
         self._topology: dict[str, dict[str, Any]] | None = None
         self._topology_fetched_at: datetime | None = None
@@ -102,8 +106,8 @@ class MetroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.api.async_get_stations_realtime(),
                     self._async_get_network_equipments(),
                 )
-                return self._without_night_closures(
-                    build_metro_structure(lines, {}, stations_rt, dict(network), _format_time)
+                return self._visible_perturbations(
+                    build_metro_structure(lines, {}, stations_rt, dict(network), _format_time), {}
                 )
 
             topology = await self._async_get_topology()
@@ -118,15 +122,19 @@ class MetroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except StarApiError as err:
             raise UpdateFailed(f"Erreur API STAR (métro) : {err}") from err
 
-        return self._without_night_closures(
-            build_metro_structure(lines, topology, stations_rt, equipments, _format_time)
+        return self._visible_perturbations(
+            build_metro_structure(lines, topology, stations_rt, equipments, _format_time), topology
         )
 
     # ------------------------------------------------------------------
-    def _without_night_closures(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Les stations ferment la nuit : ce n'est pas une perturbation."""
+    def _visible_perturbations(self, data: dict[str, Any], topology: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Perturbations des lignes suivies, sans les fermetures de nuit.
+
+        Les stations ferment la nuit : ce n'est pas une perturbation.
+        """
+        lines = followed_lines(self._line_codes, topology, self._station_ids)
         data["perturbations"] = drop_off_service_closures(
-            data.get("perturbations", []), self._is_served
+            perturbations_on_lines(data.get("perturbations", []), lines), self._is_served
         )
         return data
 

@@ -392,6 +392,25 @@ def within_service_hours(local: datetime) -> bool:
     return not (end_h * 60 + end_m <= minutes < start)
 
 
+def followed_lines(line_codes: list[str] | None, topology: dict[str, dict[str, Any]], station_ids: list[str]) -> set[str]:
+    """Lignes suivies : cochées, ou desservant une station suivie (« A/B » : les deux)."""
+    lines = {str(code).upper() for code in line_codes or []}
+    for sid in station_ids:
+        code = (topology.get(sid) or {}).get("line_code") or ""
+        lines.update(c for c in str(code).upper().split("/") if c)
+    return lines
+
+
+def perturbations_on_lines(perturbations: list[dict[str, Any]], lines: set[str]) -> list[dict[str, Any]]:
+    """Perturbations des lignes suivies : panne de la ligne, ou station fermée sur la ligne.
+
+    Une station fermée non suivie compte aussi : on ne peut ni y monter ni y
+    descendre. Une correspondance fermée sur une seule ligne n'est gardée que
+    si cette ligne est suivie.
+    """
+    return [item for item in perturbations if set(item.get("lignes") or []) & lines]
+
+
 def drop_off_service_closures(
     perturbations: list[dict[str, Any]],
     is_served: Callable[[str, str], bool],

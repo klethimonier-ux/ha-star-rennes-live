@@ -64,6 +64,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry,
             client,
             station_ids=config.get("metro_stations", []),
+            line_codes=config.get("metro_lines", []),
         )
 
     if config.get("parking_ids"):

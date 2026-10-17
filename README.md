@@ -10,7 +10,7 @@ Intégration Home Assistant pour le réseau **STAR** de Rennes : métro en temps
 ## Fonctionnalités
 
 **Métro (lignes a et b)**
-- État des lignes et perturbations (ligne en panne, station fermée pendant le service).
+- État des lignes et perturbations : ligne en panne, station fermée pendant le service. Elles s'affichent d'elles-mêmes en tête de la carte « Mes trajets » pour les lignes suivies (cochées, ou desservant une station suivie), y compris les stations fermées que vous ne suivez pas.
 - Stations suivies : ouverte / fermée, ascenseurs et escaliers par direction, **deux prochains passages en temps réel**, avec l'**affluence** de chaque rame quand STAR la publie.
 - Schéma des deux lignes avec la **position des rames en temps réel** (reconstituée à partir des prochains passages publiés par STAR, horaires GTFS en secours).
 
@@ -64,7 +64,7 @@ Les deux cartes sont chargées automatiquement par l'intégration : aucune resso
 ```yaml
 type: custom:star-trajets-card
 title: Mes trajets                         # facultatif
-perturbations: sensor.star_perturbations   # facultatif
+perturbations: false                       # facultatif : masque les alertes métro (affichées par défaut)
 show_distributeurs: false                  # facultatif
 entities:
   - sensor.becquerel_za_saint_sulpice      # bus
@@ -74,6 +74,8 @@ entities:
   - entity: sensor.atalante_grand_quartier
     name: Atalante                         # nom affiché (facultatif)
 ```
+
+Les pannes de ligne et les stations fermées n'ont pas à être ajoutées : elles apparaissent seules en tête de carte, et une station dont la ligne est en panne affiche « ligne à l'arrêt » au lieu des prochains passages.
 
 Remplacez les entités par les vôtres (Outils de développement → États). Pour une carte différente par personne, créez une carte par personne et utilisez l'onglet **Visibilité** de chaque carte.
 
