@@ -14,7 +14,7 @@ Intégration Home Assistant pour le réseau **STAR** de Rennes : métro en temps
 - Stations suivies : ouverte / fermée, ascenseurs et escaliers par direction, **deux prochains passages en temps réel**, avec l'**affluence** de chaque rame quand STAR la publie.
 - Schéma des deux lignes avec la **position des rames en temps réel** (reconstituée à partir des prochains passages publiés par STAR, horaires GTFS en secours).
 
-**Bus** : prochains départs d'un arrêt dans une direction, temps réel ou horaire théorique, et **alertes trafic** de la ligne : une ligne à l'arrêt (manifestation, grève…) est signalée en tête de carte, un report d'arrêt ou une déviation s'affiche dans l'encart du sens concerné.
+**Bus** : prochains départs d'un arrêt dans une direction, temps réel ou horaire théorique, et **alertes trafic** de la ligne : une ligne à l'arrêt (manifestation, grève…) est signalée en tête de carte, un report d'arrêt ou une déviation s'affiche, replié, dans l'encart de votre arrêt seulement s'il est touché dans votre sens (cliquez pour déplier).
 
 **Le vélo STAR** : vélos et places disponibles par station, état (ouverte, en panne, maintenance, fermée).
 

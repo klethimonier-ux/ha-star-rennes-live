@@ -58,15 +58,47 @@ def is_suspension(title: Any, description: Any) -> bool:
     return any(re.search(pattern, text) for pattern in SUSPENSION_PATTERNS)
 
 
+# En-tête de section d'une alerte : « Ligne C4 vers Grand Quartier »
+_SECTION_HEADER = re.compile(r"^\s*ligne\s+\S+\s+vers\s+(.+?)\s*[.:]?\s*$", re.IGNORECASE)
+# Arrêts touchés : « L'arrêt Les Préales est reporté… », « Les arrêts A et B ne sont pas desservis »
+_AFFECTED_STOPS = re.compile(
+    r"\barr[eê]ts?\s+(.+?)\s+(?:est|sont|sera|seront|n['’]est|ne\s+sont|ne\s+sera|ne\s+seront|non)\b",
+    re.IGNORECASE,
+)
+
+
+def split_sections(description: Any) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """(lignes d'introduction, [(direction, lignes de la section)]).
+
+    Les alertes STAR décrivent souvent chaque sens à part :
+    « Ligne C4 vers Grand Quartier » puis les arrêts reportés de ce sens.
+    """
+    intro: list[str] = []
+    sections: list[tuple[str, list[str]]] = []
+    for raw in str(description or "").splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        header = _SECTION_HEADER.match(line) if line else None
+        if header:
+            sections.append((header.group(1).strip(), []))
+        elif line:
+            (sections[-1][1] if sections else intro).append(line)
+    return intro, sections
+
+
 def mentioned_directions(description: Any) -> list[str]:
     """Directions citées (« Ligne 11 vers Roazhon Park/ZI Ouest » -> ["Roazhon Park/ZI Ouest"])."""
-    found = []
-    for line in str(description or "").splitlines():
-        for match in re.finditer(r"\bvers\s+([^.,;:·\n]+)", line, flags=re.IGNORECASE):
-            value = match.group(1).strip()
-            if value and value not in found:
-                found.append(value)
+    found: list[str] = []
+    for direction, _ in split_sections(description)[1]:
+        if direction not in found:
+            found.append(direction)
     return found
+
+
+def _same_direction(direction: str, destination: str) -> bool:
+    """« Roazhon Park/ZI Ouest » vaut pour « Roazhon Park » comme pour « ZI Ouest »."""
+    dest = _normalize(destination)
+    parts = (part.strip() for part in re.split(r"[/|]", _normalize(direction)))
+    return any(part and (part in dest or dest in part) for part in parts)
 
 
 def concerns_direction(alert: dict[str, Any], destination: str | None) -> bool:
@@ -74,13 +106,36 @@ def concerns_direction(alert: dict[str, Any], destination: str | None) -> bool:
     directions = alert.get("directions") or []
     if not directions or not destination:
         return True
-    dest = _normalize(destination)
-    for direction in directions:
-        for part in re.split(r"[/|]", _normalize(direction)):
-            part = part.strip()
-            if part and (part in dest or dest in part):
-                return True
-    return False
+    return any(_same_direction(direction, destination) for direction in directions)
+
+
+def affected_stops(text: Any) -> list[str]:
+    """Arrêts reportés ou non desservis cités dans un texte d'alerte."""
+    stops: list[str] = []
+    for match in _AFFECTED_STOPS.finditer(str(text or "")):
+        for name in re.split(r",\s*|\s+et\s+", match.group(1)):
+            name = name.strip()
+            if name and name not in stops:
+                stops.append(name)
+    return stops
+
+
+def relevant_text(alert: dict[str, Any], stop: str | None, destination: str | None) -> str | None:
+    """Partie de l'alerte qui concerne cet arrêt dans ce sens, ou None.
+
+    - seules les sections du sens suivi comptent (« Ligne C4 vers … ») ;
+    - si elles citent des arrêts touchés, l'alerte ne vaut que si l'arrêt
+      suivi est cité (arrêt reporté, ou arrêt de report) ;
+    - une alerte sans arrêt cité (déviation générale…) vaut pour tous.
+    """
+    sections = alert.get("sections") or []
+    texts = [s["texte"] for s in sections if not destination or _same_direction(s["direction"], destination)]
+    if sections and not texts:
+        return None  # sections pour l'autre sens seulement
+    text = " · ".join(t for t in texts if t) if sections else alert.get("description") or ""
+    if stop and affected_stops(text) and _normalize(stop) not in _normalize(text):
+        return None  # arrêts touchés, mais pas celui-ci
+    return text
 
 
 def _clean(text: Any) -> str:
@@ -115,6 +170,7 @@ def _new_group(rec: dict[str, Any], levels: list[str]) -> dict[str, Any]:
         "bloquante": any(level.lower() in BLOCKING_LEVELS for level in levels),
         "type": "suspension" if is_suspension(rec.get("titre"), rec.get("description")) else "info",
         "directions": mentioned_directions(rec.get("description")),
+        **_structured(rec.get("description")),
         "lignes": [],
         "debut": rec.get("debutvalidite"),
         "fin": rec.get("finvalidite"),
@@ -144,6 +200,15 @@ def active_alerts(records: list[dict[str, Any]], now: datetime) -> list[dict[str
     for group in groups.values():
         group["lignes"].sort(key=_line_sort_key)
     return sorted(groups.values(), key=lambda g: (g["type"] != "suspension", not g["bloquante"], g["titre"]))
+
+
+def _structured(description: Any) -> dict[str, Any]:
+    """Introduction (période…) et sections par sens d'une description d'alerte."""
+    intro, sections = split_sections(description)
+    return {
+        "intro": " · ".join(intro),
+        "sections": [{"direction": d, "texte": " · ".join(lines)} for d, lines in sections],
+    }
 
 
 def alerts_for_line(alerts: list[dict[str, Any]], line_name: str) -> list[dict[str, Any]]:

@@ -760,6 +760,38 @@ class TrafficAlertsTests(unittest.TestCase):
         self.assertFalse(concerns_direction(tnb, "Saint-Laurent"))
         self.assertTrue(concerns_direction({"directions": []}, "Saint-Laurent"))  # pas de sens cité : les deux
 
+    C4_TRAVAUX = (
+        "Jusqu'au vendredi 18 décembre 18h\n\n"
+        "Ligne C4 vers Grand Quartier\n"
+        "L'arrêt Tournebride est reporté à l'arrêt Tournebride (ligne 67 vers Rennes).\n"
+        "L'arrêt Les Préales est reporté à l'arrêt temporaire situé rue Django Reinhardt.\n"
+        "L'arrêt Plaine de Baud est reporté à l'arrêt temporaire situé avenue François Château.\n\n"
+        "Ligne C4 vers ZA Saint-Sulpice\n"
+        "L'arrêt Plaine de Baud est reporté à l'arrêt temporaire situé avenue François Château.\n"
+        "L'arrêt Les Préales est reporté à l'arrêt temporaire situé rue Django Reinhardt."
+    )
+
+    def test_stop_and_direction_relevance(self):
+        from custom_components.star_rennes_live.api.alerts_api import active_alerts, relevant_text
+
+        rec = {"idperturbation": "T1", "titre": "Travaux", "description": self.C4_TRAVAUX, "niveau": ["Bloquante"],
+               "nomcourtligne": "C4", "debutvalidite": "2026-10-01T00:00:00+00:00", "finvalidite": "2026-12-18T17:00:00+00:00"}
+        alert = active_alerts([rec], datetime(2026, 10, 19, 16, 0, tzinfo=timezone.utc))[0]
+        self.assertEqual(alert["intro"], "Jusqu'au vendredi 18 décembre 18h")
+        self.assertEqual(alert["directions"], ["Grand Quartier", "ZA Saint-Sulpice"])  # pas « Rennes) »
+        # Arrêts suivis non touchés : rien dans l'encart
+        self.assertIsNone(relevant_text(alert, "Atalante", "Grand Quartier"))
+        self.assertIsNone(relevant_text(alert, "Becquerel", "ZA Saint-Sulpice"))
+        # Arrêt touché : seulement la section de son sens
+        text = relevant_text(alert, "Tournebride", "Grand Quartier")
+        self.assertTrue(text.startswith("L'arrêt Tournebride est reporté"))
+        self.assertNotIn("Plaine de Baud est reporté à l'arrêt temporaire situé avenue François Château. · L'arrêt Les Préales", text)
+        self.assertIsNone(relevant_text(alert, "Tournebride", "ZA Saint-Sulpice"))  # touché dans l'autre sens seulement
+        self.assertIn("Plaine de Baud", relevant_text(alert, "Plaine de Baud", "ZA Saint-Sulpice"))
+        # Déviation sans arrêt cité : vaut pour tous les arrêts
+        general = active_alerts([{**rec, "description": "Ligne C4 déviée rue de Paris."}], datetime(2026, 10, 19, tzinfo=timezone.utc))[0]
+        self.assertEqual(relevant_text(general, "Atalante", "Grand Quartier"), "Ligne C4 déviée rue de Paris.")
+
     def test_alerts_failure_does_not_block_buses(self):
         db = make_db()
         db.pop("tco-busmetro-trafic-alertes-tr", None)

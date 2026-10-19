@@ -19,7 +19,7 @@ from ..const import (
     SENS_KEY,
     ICON_URL_KEY,
 )
-from ..api.alerts_api import alerts_for_line, concerns_direction
+from ..api.alerts_api import alerts_for_line, relevant_text
 from ..coordinator_bus import StarBusCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,21 +88,26 @@ class StarBusSensor(CoordinatorEntity, SensorEntity):
 
     def _line_alerts(self) -> list[dict[str, Any]]:
         alerts = getattr(self._alerts, "data", None) or []
-        return [
-            {
-                "titre": a["titre"],
-                "description": a["description"],
-                "niveau": a["niveau"],
-                "bloquante": a["bloquante"],
-                # suspension : ligne arrêtée ; info : report d'arrêt, déviation…
-                "type": a["type"],
-                "directions": a["directions"],
-                "ce_sens": concerns_direction(a, self._coordinator.destination),
-                "lignes": a["lignes"],
-                "fin": a["fin"],
-            }
-            for a in alerts_for_line(alerts, self._coordinator.line_name)
-        ]
+        return [self._alert_for_stop(a) for a in alerts_for_line(alerts, self._coordinator.line_name)]
+
+    def _alert_for_stop(self, alert: dict[str, Any]) -> dict[str, Any]:
+        # Partie de l'alerte qui vaut pour cet arrêt dans ce sens (None : ne le concerne pas)
+        texte = relevant_text(alert, self._coordinator.stop_name, self._coordinator.destination)
+        return {
+            "titre": alert["titre"],
+            "description": alert["description"],
+            "intro": alert.get("intro", ""),
+            "texte": texte,
+            "niveau": alert["niveau"],
+            "bloquante": alert["bloquante"],
+            # suspension : ligne arrêtée ; info : report d'arrêt, déviation…
+            "type": alert["type"],
+            "directions": alert["directions"],
+            # Affichée dans l'encart : l'arrêt suivi est touché, dans ce sens
+            "ce_sens": texte is not None,
+            "lignes": alert["lignes"],
+            "fin": alert["fin"],
+        }
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

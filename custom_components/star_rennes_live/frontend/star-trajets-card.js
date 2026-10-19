@@ -14,7 +14,7 @@
  */
 
 (() => {
-const CARD_VERSION = "1.11.0";
+const CARD_VERSION = "1.12.0";
 
 // Affluence publiée par STAR pour chaque rame (couleur de remplissage)
 const CROWD_LEVELS = {
@@ -52,6 +52,9 @@ const CATEGORY_LABELS = {
   distributeurs: ["Distributeur", "Distributeurs"],
 };
 
+// Au-delà de cette longueur, le détail d'une alerte en tête de carte est replié
+const FOLD_AFTER = 90;
+
 const LINE_STOPPED_HTML = '<div class="dir-wait small muted">ligne à l\'arrêt</div>';
 
 // « 3 rames », « 1 vélo » : pluriel sans gabarit imbriqué
@@ -74,7 +77,17 @@ class StarTrajetsCard extends HTMLElement {
       entities: config.entities.map((e) => (typeof e === "string" ? { entity: e } : e)),
     };
     this._signature = null;
-    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    if (!this.shadowRoot) {
+      this.attachShadow({ mode: "open" });
+      // Alertes dépliées : mémorisées pour survivre au rafraîchissement de la carte
+      this._open = new Set();
+      this.shadowRoot.addEventListener("toggle", (e) => {
+        const key = e.target?.dataset?.key;
+        if (!key) return;
+        if (e.target.open) this._open.add(key);
+        else this._open.delete(key);
+      }, true);
+    }
     this._render();
   }
 
@@ -249,14 +262,31 @@ class StarTrajetsCard extends HTMLElement {
   _renderPerturbation(p) {
     const critical = p.niveau === "critique";
     const badge = this._perturbationBadge(p);
+    const cls = "perturbation " + (critical ? "critical" : "warning");
+    // Détail long (description d'alerte) : replié ; court (« Reprise vers 18:45 ») : affiché
+    if (p.detail && p.detail.length > FOLD_AFTER) {
+      const summary = `${badge}<div class="text"><div class="strong">${esc(p.titre)}</div></div>`;
+      return this._fold("p|" + p.titre, cls, summary, `<div class="small soft">${esc(p.detail)}</div>`);
+    }
+    const detail = p.detail ? '<div class="small soft">' + esc(p.detail) + "</div>" : "";
     return `
-      <div class="perturbation ${critical ? "critical" : "warning"}">
+      <div class="${cls}">
         ${badge}
         <div class="text">
           <div class="strong">${esc(p.titre)}</div>
-          ${p.detail ? `<div class="small soft">${esc(p.detail)}</div>` : ""}
+          ${detail}
         </div>
       </div>`;
+  }
+
+  // Bloc repliable : le résumé reste visible, le détail s'ouvre au clic
+  _fold(key, cls, summary, body) {
+    const open = this._open?.has(key) ? " open" : "";
+    return `
+      <details class="fold ${cls}" data-key="${esc(key)}"${open}>
+        <summary>${summary}<ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon></summary>
+        <div class="fold-body">${body}</div>
+      </details>`;
   }
 
   _perturbationBadge(p) {
@@ -306,12 +336,15 @@ class StarTrajetsCard extends HTMLElement {
     }
 
     // Report d'arrêt, déviation… : dans l'encart, seulement pour le sens concerné
+    // (seulement si l'arrêt suivi est touché), repliée : titre et période, détail au clic
     const infos = (a.alertes || []).filter((x) => x.type !== "suspension" && x.ce_sens !== false);
-    const infoHtml = infos.map((x) => `
-        <div class="bus-info">
-          <ha-icon icon="mdi:sign-direction"></ha-icon>
-          <div><span class="strong">${esc(x.titre)}</span> · ${esc(x.description)}</div>
-        </div>`).join("");
+    const infoHtml = infos.map((x) => {
+      const period = x.intro ? '<span class="soft"> · ' + esc(x.intro) + "</span>" : "";
+      const summary = `<ha-icon icon="mdi:sign-direction"></ha-icon><div class="fold-title"><span class="strong">${esc(x.titre)}</span>${period}</div>`;
+      // Une phrase par ligne une fois déplié (les lignes de la description STAR sont séparées par « · »)
+      const body = String(x.texte ?? x.description ?? "").split(" · ").map(esc).join("<br>");
+      return this._fold(`b|${conf.entity}|${x.titre}`, "bus-info", summary, body);
+    }).join("");
     return `
       <div class="tile bus-tile">
         <div class="bus">
@@ -566,13 +599,27 @@ StarTrajetsCard.styles = `
   .tile.suspended { opacity: 0.55; padding-top: 7px; padding-bottom: 7px; }
   .tile.suspended .strong { font-weight: 500; }
   .bus-info {
-    display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; padding: 7px 9px;
+    margin-top: 8px; padding: 7px 9px;
     border-radius: 8px; font-size: 12.5px; line-height: 1.35;
     background: rgba(245, 166, 35, 0.12); color: var(--primary-text-color);
     --mdc-icon-size: 16px;
   }
-  .bus-info ha-icon { color: var(--star-warn-text); flex: none; margin-top: 1px; }
+  .bus-info summary { gap: 8px; }
+  .bus-info ha-icon { color: var(--star-warn-text); flex: none; }
   .bus-info .strong { color: var(--star-warn-text); }
+  .bus-info .fold-body { margin: 6px 0 0 24px; }
+
+  /* Alertes repliables */
+  details.fold summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
+  details.fold summary::-webkit-details-marker { display: none; }
+  details.fold summary .text, details.fold .fold-title { flex: 1; min-width: 0; }
+  details.fold .fold-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  details.fold[open] .fold-title { white-space: normal; }
+  details.fold .chevron { flex: none; color: var(--secondary-text-color); --mdc-icon-size: 18px; transition: transform 0.2s; }
+  details.fold[open] .chevron { transform: rotate(180deg); }
+  details.perturbation { display: block; }
+  details.perturbation .fold-body { margin-top: 6px; }
+  details.perturbation .fold-body .small { display: block; -webkit-line-clamp: unset; }
   .right { text-align: right; }
   .wait { font-size: 20px; font-weight: 700; color: var(--primary-text-color); line-height: 1.1; white-space: nowrap; }
   .wait.soft { color: var(--secondary-text-color); }
