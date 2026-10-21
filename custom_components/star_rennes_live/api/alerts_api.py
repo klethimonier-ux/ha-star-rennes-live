@@ -58,13 +58,19 @@ def is_suspension(title: Any, description: Any) -> bool:
     return any(re.search(pattern, text) for pattern in SUSPENSION_PATTERNS)
 
 
-# En-tête de section d'une alerte : « Ligne C4 vers Grand Quartier »
-_SECTION_HEADER = re.compile(r"^\s*ligne\s+\S+\s+vers\s+(.+?)\s*[.:]?\s*$", re.IGNORECASE)
 # Arrêts touchés : « L'arrêt Les Préales est reporté… », « Les arrêts A et B ne sont pas desservis »
-_AFFECTED_STOPS = re.compile(
-    r"\barr[eê]ts?\s+(.+?)\s+(?:est|sont|sera|seront|n['’]est|ne\s+sont|ne\s+sera|ne\s+seront|non)\b",
-    re.IGNORECASE,
-)
+# (analyse mot à mot, sans expression régulière : temps linéaire quel que soit le texte)
+_STOP_WORDS = {"arrêt", "arrêts", "arret", "arrets"}
+_STOP_VERBS = {"est", "sont", "sera", "seront", "n'est", "ne", "non"}
+_MAX_STOP_WORDS = 8  # au-delà, ce n'est plus un nom d'arrêt
+
+
+def _section_direction(line: str) -> str | None:
+    """« Ligne C4 vers Grand Quartier » -> « Grand Quartier » (en-tête de section), sinon None."""
+    words = line.split(" ", 3)
+    if len(words) < 4 or words[0].lower() != "ligne" or words[2].lower() != "vers":
+        return None
+    return words[3].rstrip(" .:") or None
 
 
 def split_sections(description: Any) -> tuple[list[str], list[tuple[str, list[str]]]]:
@@ -77,9 +83,9 @@ def split_sections(description: Any) -> tuple[list[str], list[tuple[str, list[st
     sections: list[tuple[str, list[str]]] = []
     for raw in str(description or "").splitlines():
         line = re.sub(r"\s+", " ", raw).strip()
-        header = _SECTION_HEADER.match(line) if line else None
-        if header:
-            sections.append((header.group(1).strip(), []))
+        direction = _section_direction(line) if line else None
+        if direction:
+            sections.append((direction, []))
         elif line:
             (sections[-1][1] if sections else intro).append(line)
     return intro, sections
@@ -112,12 +118,29 @@ def concerns_direction(alert: dict[str, Any], destination: str | None) -> bool:
 def affected_stops(text: Any) -> list[str]:
     """Arrêts reportés ou non desservis cités dans un texte d'alerte."""
     stops: list[str] = []
-    for match in _AFFECTED_STOPS.finditer(str(text or "")):
-        for name in re.split(r",\s*|\s+et\s+", match.group(1)):
-            name = name.strip()
-            if name and name not in stops:
-                stops.append(name)
+    words = str(text or "").replace("’", "'").split()
+    for k, word in enumerate(words):
+        if word.lower().removeprefix("l'").removeprefix("d'") in _STOP_WORDS:
+            for name in _stop_names(words[k + 1 : k + 1 + _MAX_STOP_WORDS + 1]):
+                if name not in stops:
+                    stops.append(name)
     return stops
+
+
+def _stop_names(following: list[str]) -> list[str]:
+    """Noms d'arrêt avant le verbe (« Les Préales est reporté » -> ["Les Préales"]).
+
+    Rien si aucun verbe ne suit de près (« l'arrêt temporaire situé rue… »).
+    """
+    name: list[str] = []
+    for word in following:
+        if word.lower() in _STOP_VERBS:
+            joined = " ".join(name).replace(" et ", ", ")
+            return [n.strip() for n in joined.split(",") if n.strip()]
+        if word == "·" or len(name) == _MAX_STOP_WORDS:
+            break
+        name.append(word)
+    return []
 
 
 def relevant_text(alert: dict[str, Any], stop: str | None, destination: str | None) -> str | None:
