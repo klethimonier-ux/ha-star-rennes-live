@@ -97,6 +97,36 @@ class RealtimeTests(unittest.TestCase):
         self.assertEqual(train_position(rel(x), 50), 2.0)
 
 
+class NoBlockingTimezoneTests(unittest.TestCase):
+    """Aucun fuseau chargé pendant les mises à jour (lecture de tzdata = appel bloquant)."""
+
+    def test_timezone_resolved_once(self):
+        from unittest import mock
+        from custom_components.star_rennes_live.api import gtfs_metro
+        from custom_components.star_rennes_live.api.gtfs_metro import (
+            PARIS_TZ, next_departures, parse_gtfs_metro, station_served, trains_window,
+        )
+        from custom_components.star_rennes_live.api.metro_realtime import (
+            build_realtime_trains, is_fresh, parse_passages, passages_by_station,
+        )
+
+        schedule = parse_gtfs_metro(GTFS)  # dans un thread côté Home Assistant
+        self.assertIs(schedule.tz, PARIS_TZ)
+
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("ZoneInfo() appelé pendant une mise à jour")
+
+        with mock.patch.object(gtfs_metro, "ZoneInfo", forbidden):
+            # Tout ce que font les coordinateurs toutes les 30 s
+            self.assertTrue(is_fresh(RECORDS, NOW))
+            passages = parse_passages(RECORDS, now=NOW)
+            passages_by_station(passages, NOW)
+            build_realtime_trains(passages, schedule, NOW)
+            trains_window(schedule, NOW)
+            next_departures(schedule, NOW)
+            station_served(schedule, NOW, "A", "Gares")
+
+
 class SameSegmentTests(unittest.TestCase):
     """Deux rames entre Villejean (1) et République (2), une troisième à quai à Villejean."""
 

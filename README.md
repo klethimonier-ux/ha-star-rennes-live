@@ -22,11 +22,13 @@ Intégration Home Assistant pour le réseau **STAR** de Rennes : métro en temps
 
 ## Installation
 
-### Avec HACS (dépôt personnalisé)
+### Avec HACS (recommandé)
 
-1. HACS → menu ⋮ → **Dépôts personnalisés**.
-2. Dépôt : `https://github.com/klethimonier-ux/ha-star-rennes-live`, type : **Intégration**.
-3. Cherchez **STAR Rennes Live**, installez, puis redémarrez Home Assistant.
+1. Ouvrez **HACS** et cherchez **STAR Rennes Live**.
+2. Installez, puis redémarrez Home Assistant.
+3. Ajoutez l'intégration (voir [Configuration](#configuration)).
+
+Si l'intégration n'apparaît pas encore dans la recherche, ajoutez le dépôt à la main : HACS → menu ⋮ → **Dépôts personnalisés**, dépôt `https://github.com/klethimonier-ux/ha-star-rennes-live`, type **Intégration**.
 
 ### Manuelle
 
@@ -53,7 +55,7 @@ La clé est envoyée dans l'en-tête HTTP, jamais dans l'URL ni dans les journau
 3. Choisissez les stations de vélo, parcs relais, lignes et stations de métro.
 4. **Schéma des rames en temps réel** : à cocher pour la carte « Métro ». Les horaires GTFS du métro (~8 Mo) sont alors téléchargés au démarrage puis une fois par jour.
 
-Tout se modifie ensuite via **Configurer** sur l'intégration ; elle se recharge aussitôt.
+Une seule configuration est possible : tout se modifie ensuite via **Configurer** sur l'intégration, qui se recharge aussitôt.
 
 ## Cartes
 

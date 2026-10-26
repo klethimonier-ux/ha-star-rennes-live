@@ -16,7 +16,7 @@ import re
 import zipfile
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, tzinfo
 from zoneinfo import ZoneInfo
 
 GTFS_URL = "https://eu.ftp.opendatasoft.com/star/gtfs/GTFS_STAR_BUS_METRO_EN_COURS.zip"
@@ -24,6 +24,10 @@ GTFS_URL = "https://eu.ftp.opendatasoft.com/star/gtfs/GTFS_STAR_BUS_METRO_EN_COU
 # route_type GTFS : 1 = métro ; 400-404 = types étendus « urban railway »
 METRO_ROUTE_TYPES = {"1", "400", "401", "402", "403", "404"}
 DEFAULT_TIMEZONE = "Europe/Paris"
+# Fuseau chargé une seule fois, à l'import du module (hors de la boucle
+# d'événements de Home Assistant) : lire les données tzdata sur le disque est
+# un appel bloquant.
+PARIS_TZ = ZoneInfo(DEFAULT_TIMEZONE)
 _HEX_COLOR = re.compile(r"^[0-9A-Fa-f]{6}$")
 
 
@@ -54,6 +58,8 @@ class MetroSchedule:
     exceptions: dict[str, dict[date, int]] = field(default_factory=dict)
     # (ligne, index min, index max) -> temps de parcours médian entre deux stations voisines (s)
     segment_times: dict[tuple[str, int, int], float] = field(default_factory=dict)
+    # Fuseau du réseau, résolu dans parse_gtfs_metro (exécuté hors de la boucle)
+    tz: tzinfo = PARIS_TZ
 
     def services_on(self, day: date) -> set[str]:
         """service_id actifs un jour donné (calendar.txt + calendar_dates.txt)."""
@@ -107,7 +113,7 @@ def parse_gtfs_metro(data: bytes) -> MetroSchedule:
         timezone = _read_timezone(zf)
         routes = _read_routes(zf)
         if not routes:
-            return MetroSchedule(timezone, {}, [])
+            return MetroSchedule(timezone, {}, [], tz=_load_timezone(timezone))
         trips_info, blocks = _read_trips(zf, routes)
         stops = _read_stops(zf)
         raw = _read_stop_times(zf, trips_info)
@@ -120,7 +126,17 @@ def parse_gtfs_metro(data: bytes) -> MetroSchedule:
     segment_times = _segment_times(trips)
     link_terminus_layovers(trips, {code: len(line.stations) for code, line in lines.items()})
     trips.sort(key=lambda t: t.stops[0][1])
-    return MetroSchedule(timezone, lines, trips, calendar, exceptions, segment_times)
+    return MetroSchedule(timezone, lines, trips, calendar, exceptions, segment_times, tz=_load_timezone(timezone))
+
+
+def _load_timezone(name: str) -> tzinfo:
+    """Fuseau du GTFS (appelé depuis parse_gtfs_metro, dans un thread)."""
+    if name == DEFAULT_TIMEZONE:
+        return PARIS_TZ
+    try:
+        return ZoneInfo(name)
+    except (ValueError, KeyError, OSError):  # fuseau inconnu : celui du réseau STAR
+        return PARIS_TZ
 
 
 def _read_timezone(zf: zipfile.ZipFile) -> str:
@@ -366,7 +382,7 @@ def _extend(arriving: MetroTrip, leaving: MetroTrip) -> bool:
 # ---------------------------------------------------------------------------
 # RAMES EN CIRCULATION
 # ---------------------------------------------------------------------------
-def _service_day_start(day: date, tz: ZoneInfo) -> float:
+def _service_day_start(day: date, tz: tzinfo) -> float:
     """Origine des horaires GTFS : « midi moins 12 h » (correct les jours de changement d'heure)."""
     return (datetime.combine(day, time(12), tzinfo=tz) - timedelta(hours=12)).timestamp()
 
@@ -376,7 +392,7 @@ def _service_trips(schedule: MetroSchedule, now: datetime) -> Iterator[tuple[flo
 
     Une course de la veille peut encore circuler après minuit.
     """
-    tz = ZoneInfo(schedule.timezone)
+    tz = schedule.tz
     today = now.astimezone(tz).date()
     for day in (today - timedelta(days=1), today):
         services = schedule.services_on(day)

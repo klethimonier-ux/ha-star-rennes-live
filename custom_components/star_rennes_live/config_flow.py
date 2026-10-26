@@ -48,10 +48,8 @@ class StarRennesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # PAGE 1 : TYPES
     # -------------------------------------------------------------------------
     async def async_step_user(self, user_input=None):
-        existing = self._async_current_entries()
-        if existing:
-            return await self.hass.config_entries.options.async_init(existing[0].entry_id)
-
+        # Une seule entrée (« single_config_entry » dans manifest.json) : Home
+        # Assistant refuse lui-même une deuxième ; on modifie via « Configurer ».
         errors = {}
 
         if user_input is not None:

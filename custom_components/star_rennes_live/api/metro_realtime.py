@@ -15,10 +15,9 @@ Module sans dépendance Home Assistant (testable seul).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, tzinfo
 
-from .gtfs_metro import MetroSchedule, _normalize_name, direction_label
+from .gtfs_metro import PARIS_TZ, MetroSchedule, _normalize_name, direction_label
 
 DATASET = "tco-metro-circulation-deux-prochains-passages-tr"
 LINE_CODES = {"1001": "A", "1002": "B"}
@@ -44,7 +43,7 @@ class Passage:
     fills: list[str | None] = field(default_factory=list)  # remplissage STAR (« Vert Clair »…), aligné sur times
 
 
-def _parse_local(value: str | None, tz: ZoneInfo) -> float | None:
+def _parse_local(value: str | None, tz: tzinfo) -> float | None:
     if not value:
         return None
     try:
@@ -66,7 +65,7 @@ def _fill_value(value) -> str | None:
 
 def parse_passages(
     records: list[dict],
-    timezone: str = "Europe/Paris",
+    tz: tzinfo = PARIS_TZ,
     now: datetime | None = None,
 ) -> list[Passage]:
     """Passages publiés ; avec now, les fiches figées sont ignorées.
@@ -75,7 +74,6 @@ def parse_passages(
     ses horaires, vieux de plusieurs dizaines de minutes, fausseraient le
     suivi des rames et les prochains passages affichés.
     """
-    tz = ZoneInfo(timezone)
     passages: list[Passage] = []
     for rec in records:
         line = LINE_CODES.get(str(rec.get("idligne")))
@@ -98,7 +96,7 @@ def parse_passages(
     return passages
 
 
-def _record_times(rec: dict, tz: ZoneInfo) -> list[tuple[float, float, str | None, str | None]]:
+def _record_times(rec: dict, tz: tzinfo) -> list[tuple[float, float, str | None, str | None]]:
     """(arrivée, départ, n° de course, remplissage) des deux rames d'une fiche, dans l'ordre."""
     times = []
     for rank in ("first", "second"):
@@ -115,7 +113,7 @@ def _record_times(rec: dict, tz: ZoneInfo) -> list[tuple[float, float, str | Non
     return times
 
 
-def _record_is_fresh(rec: dict, now: datetime, tz: ZoneInfo) -> bool:
+def _record_is_fresh(rec: dict, now: datetime, tz: tzinfo) -> bool:
     """Fiche extraite il y a moins de MAX_AGE (heureextraction « HH:MM:SS »)."""
     value = rec.get("heureextraction")
     if not value:
@@ -131,9 +129,8 @@ def _record_is_fresh(rec: dict, now: datetime, tz: ZoneInfo) -> bool:
     return -120 <= age <= MAX_AGE
 
 
-def is_fresh(records: list[dict], now: datetime, timezone: str = "Europe/Paris") -> bool:
+def is_fresh(records: list[dict], now: datetime, tz: tzinfo = PARIS_TZ) -> bool:
     """Au moins une fiche récente (une station fermée peut garder une fiche figée)."""
-    tz = ZoneInfo(timezone)
     return any(rec.get("heureextraction") and _record_is_fresh(rec, now, tz) for rec in records)
 
 
