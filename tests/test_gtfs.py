@@ -123,6 +123,22 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(s.services_on(date(2026, 10, 18)), {"SEM"})  # dimanche ajouté
 
 
+    def test_timezone_resolved_while_parsing(self):
+        from custom_components.star_rennes_live.api.gtfs_metro import PARIS_TZ, _load_timezone, parse_gtfs_metro
+
+        self.assertIs(parse_gtfs_metro(GTFS).tz, PARIS_TZ)
+        # GTFS d'un autre réseau, sans métro : schéma vide, avec le fuseau de l'agence
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("agency.txt", "agency_id,agency_name,agency_timezone\n1,Bus,America/Montreal\n")
+            zf.writestr("routes.txt", "route_id,route_short_name,route_type\nR1,10,3\n")
+        empty = parse_gtfs_metro(buf.getvalue())
+        self.assertEqual((empty.lines, empty.trips), ({}, []))
+        self.assertEqual(str(empty.tz), "America/Montreal")
+        # Fuseau inconnu : celui du réseau STAR
+        self.assertIs(_load_timezone("Pas/Un_Fuseau"), PARIS_TZ)
+        self.assertIs(_load_timezone("Europe/Paris"), PARIS_TZ)
+
 class WindowTests(unittest.TestCase):
     def setUp(self):
         from custom_components.star_rennes_live.api.gtfs_metro import parse_gtfs_metro
